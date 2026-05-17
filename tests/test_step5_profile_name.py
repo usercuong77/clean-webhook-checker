@@ -37,6 +37,8 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertFalse(is_valid_profile_name("Facebook"))
         self.assertFalse(is_valid_profile_name("Log in to Facebook"))
         self.assertFalse(is_valid_profile_name("Error"))
+        self.assertFalse(is_valid_profile_name("Lỗi"))
+        self.assertFalse(is_valid_profile_name("\u004c\u00e1\u00bb\u0097i"))
         self.assertFalse(is_valid_profile_name("Trình duyệt này không được hỗ trợ"))
         self.assertFalse(is_valid_profile_name("This browser isn't supported"))
         self.assertFalse(is_valid_profile_name("\u0110\u0103ng nh\u1eadp ho\u1eb7c \u0111\u0103ng k\u00fd \u0111\u1ec3 xem"))
