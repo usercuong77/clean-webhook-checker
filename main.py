@@ -1,6 +1,5 @@
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-import requests
 
 from app_modules.api.controller import (
     CheckRequest,
@@ -12,7 +11,7 @@ from app_modules.api.controller import (
     realtime_check_bulk,
 )
 from app_modules.core.config import get_config
-from app_modules.telegram.telegram_relay import build_relay_target_url, relay_status, relay_telegram_webhook
+from app_modules.telegram.telegram_relay import relay_status, relay_telegram_webhook
 
 
 app = FastAPI(title="Clean Webhook Checker", version="step16-clean-webhook-checker-local")
@@ -76,34 +75,3 @@ async def webhook_telegram(request: Request, background_tasks: BackgroundTasks) 
     background_tasks.add_task(relay_telegram_webhook, body or b"{}", content_type)
     return JSONResponse({"ok": True, "queued": True}, status_code=200)
 
-
-@app.post("/admin/apps-script-cutover")
-async def admin_apps_script_cutover(request: Request) -> JSONResponse:
-    payload = await request.json()
-    action = str(payload.get("action", "")).strip()
-    if action not in {"snapshot", "apply", "set_telegram_webhook"}:
-        raise HTTPException(status_code=400, detail="invalid_cutover_action")
-
-    target_url = build_relay_target_url()
-    if not target_url:
-        raise HTTPException(status_code=500, detail="telegram_relay_target_missing")
-
-    upstream = requests.post(
-        target_url,
-        json={"clean_cutover_action": action},
-        timeout=30,
-        allow_redirects=True,
-    )
-    try:
-        upstream_body = upstream.json()
-    except ValueError:
-        upstream_body = {"rawBody": upstream.text[:2000]}
-
-    return JSONResponse(
-        {
-            "ok": 200 <= upstream.status_code < 300,
-            "upstreamStatus": upstream.status_code,
-            "upstream": upstream_body,
-        },
-        status_code=200 if 200 <= upstream.status_code < 300 else 502,
-    )
