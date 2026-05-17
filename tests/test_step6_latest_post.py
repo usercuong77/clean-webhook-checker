@@ -8,6 +8,7 @@ from app_modules.features.latest_post import (
     build_latest_post_link,
     clean_facebook_post_content,
     extract_latest_post_content_from_html,
+    extract_profile_username_from_url,
     parse_latest_post_from_html,
 )
 from app_modules.resolvers.uid_resolver import ResolvedInput
@@ -27,6 +28,13 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertIn("https://www.facebook.com/test.user?sk=posts", urls)
         self.assertIn("https://mbasic.facebook.com/profile.php?id=100000000000001&v=timeline", urls)
         self.assertIn("https://www.facebook.com/profile.php?id=100000000000001&sk=posts", urls)
+
+    def test_extracts_profile_username_from_login_next_redirect(self):
+        username = extract_profile_username_from_url(
+            "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Flamquoccuong.media%2F"
+        )
+
+        self.assertEqual(username, "lamquoccuong.media")
 
     def test_parse_latest_post_pair(self):
         html = '"post_id":"123456789012345" abc "publish_time":1760000000'

@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import requests
 
@@ -105,12 +105,20 @@ def get_latest_post(
 
     for candidate in build_cookie_candidates(request_cookies, request_cookie_pool):
         urls = build_facebook_latest_post_probe_urls(uid, resolved.username, candidate.has_cookie)
+        queued_usernames = {str(resolved.username or "").strip().lower()} if resolved.username else set()
         headers_list = _headers_for_candidate(candidate)
 
         for url in urls:
             for header_label, headers in headers_list:
                 attempt_count += 1
                 fetch = _fetch_text(url, headers, timeout)
+                discovered_username = extract_profile_username_from_url(fetch.final_url)
+                if candidate.has_cookie and discovered_username and discovered_username.lower() not in queued_usernames:
+                    queued_usernames.add(discovered_username.lower())
+                    for extra_url in build_facebook_latest_post_probe_urls(uid, discovered_username, candidate.has_cookie):
+                        if extra_url not in urls:
+                            urls.append(extra_url)
+
                 parsed = parse_latest_post_from_html(fetch.text)
                 has_post = bool(parsed and is_latest_post_id_token(parsed.get("postId")))
                 has_evidence = bool(has_post and has_latest_post_evidence_in_html(fetch.text, parsed.get("postId")))
@@ -186,6 +194,48 @@ def build_facebook_latest_post_probe_urls(uid: str, username: str = "", with_coo
         )
 
     return _unique(urls)
+
+
+def extract_profile_username_from_url(url_raw: Any) -> str:
+    url = normalize_facebook_payload_text(url_raw)
+    if not url:
+        return ""
+
+    parsed = urlsplit(url)
+    host = parsed.netloc.lower()
+    if "facebook.com" not in host:
+        return ""
+
+    path = parsed.path.strip("/")
+    first_segment = path.split("/", 1)[0].strip()
+    if first_segment in {"login", "checkpoint"}:
+        next_values = parse_qs(parsed.query).get("next") or []
+        for next_url in next_values:
+            username = extract_profile_username_from_url(unquote(next_url))
+            if username:
+                return username
+        return ""
+
+    if not first_segment:
+        return ""
+    lowered = first_segment.lower()
+    if lowered in {
+        "profile.php",
+        "people",
+        "share",
+        "story.php",
+        "permalink.php",
+        "photo.php",
+        "watch",
+        "groups",
+        "pages",
+    }:
+        return ""
+    if re.fullmatch(r"\d{8,20}", first_segment):
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9.]{3,80}", first_segment):
+        return ""
+    return first_segment
 
 
 def parse_latest_post_from_html(html_raw: Any) -> dict[str, Any] | None:
