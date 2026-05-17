@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 import requests
 
@@ -70,12 +70,11 @@ def realtime_bulk(req: RealtimeBulkRequest, x_api_key: str | None = Header(defau
 
 
 @app.post("/webhook/telegram")
-async def webhook_telegram(request: Request) -> JSONResponse:
+async def webhook_telegram(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
     body = await request.body()
     content_type = request.headers.get("content-type", "application/json")
-    result = relay_telegram_webhook(body or b"{}", content_type)
-    status_code = int(result.pop("statusCode", 200))
-    return JSONResponse(result, status_code=status_code)
+    background_tasks.add_task(relay_telegram_webhook, body or b"{}", content_type)
+    return JSONResponse({"ok": True, "queued": True}, status_code=200)
 
 
 @app.post("/admin/apps-script-cutover")
