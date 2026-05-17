@@ -1,3 +1,5 @@
+import json
+import os
 import unittest
 from unittest.mock import patch
 
@@ -5,6 +7,7 @@ from app_modules.api.controller import CheckRequest, check_input
 from app_modules.resolvers.facebook_uid_resolver import (
     FetchResult,
     build_facebook_probe_urls,
+    extract_uid_candidates_from_html,
     extract_username_from_url,
     extract_uid_from_html,
     extract_uid_from_url,
@@ -40,6 +43,10 @@ class Step42UidResolverTests(unittest.TestCase):
 
     def test_extract_uid_from_html_patterns(self):
         samples = [
+            '<meta property="al:ios:url" content="fb://profile/100000000000008">',
+            '<meta property="og:url" content="https://www.facebook.com/profile.php?id=100000000000009">',
+            '"profile_owner":"100000000000010"',
+            '"owner":{"id":"100000000000011"}',
             '"userID":"100000000000001"',
             '"profile_id":100000000000002',
             '"entity_id":"100000000000003"',
@@ -50,7 +57,31 @@ class Step42UidResolverTests(unittest.TestCase):
         ]
         for index, sample in enumerate(samples, start=1):
             with self.subTest(index=index):
-                self.assertRegex(extract_uid_from_html(sample), r"^10000000000000\d$")
+                self.assertRegex(extract_uid_from_html(sample), r"^\d{8,20}$")
+
+    def test_extract_uid_candidates_keeps_later_target_uid(self):
+        html = '{"userID":"100000000000001"} profile.php?id=100000000000077'
+
+        self.assertEqual(
+            extract_uid_candidates_from_html(html),
+            ["100000000000001", "100000000000077"],
+        )
+
+    def test_extract_uid_from_encoded_html(self):
+        html = "https:%5C%2F%5C%2Fwww.facebook.com%5C%2Fprofile.php%3Fid%3D100000000000088"
+
+        self.assertEqual(extract_uid_from_html(html), "100000000000088")
+
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_known_uid_map_resolves_username_before_network(self, fetch_text):
+        env = {"UID_RESOLVER_KNOWN_MAP_JSON": json.dumps({"kieu.anh.511762": "100013996607571"})}
+
+        with patch.dict(os.environ, env, clear=False):
+            result = resolve_uid_from_any_input("https://www.facebook.com/kieu.anh.511762")
+
+        self.assertEqual(result.uid, "100013996607571")
+        self.assertEqual(result.source, "uid_known_map")
+        self.assertEqual(fetch_text.call_count, 0)
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_four_required_link_shapes_resolve_before_checking(self, fetch_text):

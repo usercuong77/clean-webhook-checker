@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import html as html_lib
+import json
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
@@ -43,8 +44,19 @@ RESERVED_FIRST_PATHS = {
 }
 
 UID_SCRAPE_PATTERNS = [
+    r'<meta[^>]+property=["\']al:ios:url["\'][^>]+content=["\']fb://profile/(\d{8,20})',
+    r'<meta[^>]+property=["\']al:android:url["\'][^>]+content=["\']fb://profile/(\d{8,20})',
+    r'<meta[^>]+property=["\']al:web:url["\'][^>]+content=["\']fb://profile/(\d{8,20})',
+    r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']https?://(?:www\.)?facebook\.com/profile\.php\?id=(\d{8,20})',
+    r'"profile_owner"\s*:\s*"(\d{8,20})"',
+    r'"profile_owner_id"\s*:\s*"(\d{8,20})"',
+    r'"owner"\s*:\s*\{\s*"id"\s*:\s*"(\d{8,20})"',
+    r'"ownerID"\s*:\s*"(\d{8,20})"',
+    r'"profileID"\s*:\s*"(\d{8,20})"',
+    r'"user_id"\s*:\s*"(\d{8,20})"',
     r'"userID"\s*:\s*"(\d{8,20})"',
     r'"profile_id"\s*:\s*(\d{8,20})',
+    r'"profile_id"\s*:\s*"(\d{8,20})"',
     r'"entity_id"\s*:\s*"(\d{8,20})"',
     r'"actorID"\s*:\s*"(\d{8,20})"',
     r'"subject_id"\s*:\s*"(\d{8,20})"',
@@ -53,16 +65,25 @@ UID_SCRAPE_PATTERNS = [
 ]
 
 FALLBACK_UID_PROBE_USER_AGENTS = [
-    "Mozilla/5.0",
-    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
     (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "Chrome/140.0.0.0 Safari/537.36"
+    ),
+    "Mozilla/5.0",
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+    (
+        "Mozilla/5.0 (Linux; Android 13; SM-G991B) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/140.0.0.0 Mobile Safari/537.36"
     ),
 ]
 
 DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9,vi;q=0.8"
+KNOWN_UID_MAP_ENV_KEYS = (
+    "UID_RESOLVER_KNOWN_MAP_JSON",
+    "UID_RESOLVER_KNOWN_UID_MAP_JSON",
+)
 
 
 @dataclass(frozen=True)
@@ -120,6 +141,17 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
     username = extract_username_from_url(normalized)
     if not probe_urls:
         return UidResolution(value, "", username, "", "uid_resolver", "not_facebook_url")
+
+    known_uid = _resolve_uid_from_known_map(value, normalized, username)
+    if known_uid:
+        return _uid_result(
+            value,
+            known_uid,
+            username,
+            "uid_known_map",
+            "uid_found_in_known_map",
+            [],
+        )
 
     probes: list[dict[str, Any]] = []
     timeout = max(5.0, get_config().request_timeout_seconds)
@@ -231,21 +263,76 @@ def extract_username_from_url(url_raw: Any) -> str:
 
 
 def extract_uid_from_html(html_raw: Any) -> str:
-    text = str(html_raw or "")
+    candidates = extract_uid_candidates_from_html(html_raw)
+    return candidates[0] if candidates else ""
+
+
+def extract_uid_candidates_from_html(html_raw: Any) -> list[str]:
+    normalized = normalize_facebook_payload_text(html_raw)
+    if not normalized:
+        return []
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for pattern in UID_SCRAPE_PATTERNS:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            uid = str(match.group(1) if match.groups() else "").strip()
+            if not NUMERIC_UID_RE.fullmatch(uid) or uid in seen:
+                continue
+            seen.add(uid)
+            candidates.append(uid)
+    return candidates
+
+
+def normalize_facebook_payload_text(raw: Any) -> str:
+    text = str(raw or "")
     if not text:
         return ""
-
-    normalized = html_lib.unescape(
-        text.replace("\\/", "/").replace("\\u002f", "/").replace("\\u003a", ":")
-    )
-    for pattern in UID_SCRAPE_PATTERNS:
-        match = re.search(pattern, normalized, flags=re.IGNORECASE)
-        if not match:
-            continue
-        uid = str(match.group(1) if match.groups() else "").strip()
-        if NUMERIC_UID_RE.fullmatch(uid):
-            return uid
-    return ""
+    normalized = html_lib.unescape(text)
+    replacements = {
+        "\\/": "/",
+        "\\u002f": "/",
+        "\\u002F": "/",
+        "\\u003a": ":",
+        "\\u003A": ":",
+        "\\u003d": "=",
+        "\\u003D": "=",
+        "\\u0026": "&",
+        "\\u003f": "?",
+        "\\u003F": "?",
+        "\\x2f": "/",
+        "\\x2F": "/",
+        "\\x3a": ":",
+        "\\x3A": ":",
+        "\\x3d": "=",
+        "\\x3D": "=",
+        "\\x26": "&",
+        "\\x3f": "?",
+        "\\x3F": "?",
+        "&#47;": "/",
+        "&#58;": ":",
+        "&#61;": "=",
+        "&#38;": "&",
+        "&#63;": "?",
+        "%253d": "%3d",
+        "%253D": "%3D",
+        "%2526": "%26",
+        "%253f": "%3f",
+        "%253F": "%3F",
+        "%3d": "=",
+        "%3D": "=",
+        "%26": "&",
+        "%3f": "?",
+        "%3F": "?",
+    }
+    for old, new in replacements.items():
+        normalized = normalized.replace(old, new)
+    for _ in range(2):
+        decoded = unquote(normalized)
+        if decoded == normalized:
+            break
+        normalized = decoded
+    return normalized
 
 
 def build_facebook_probe_urls(url_raw: Any) -> list[str]:
@@ -280,15 +367,18 @@ def build_facebook_probe_urls(url_raw: Any) -> list[str]:
 def build_uid_probe_header_candidates() -> list[dict[str, str]]:
     accept_language = os.getenv("UID_PROBE_ACCEPT_LANGUAGE", DEFAULT_ACCEPT_LANGUAGE).strip()
     user_agents = _load_user_agents_from_file() + FALLBACK_UID_PROBE_USER_AGENTS
-    candidates = [
-        {
+    candidates = []
+    for user_agent in user_agents:
+        user_agent = str(user_agent or "").strip()
+        if not user_agent:
+            continue
+        headers = {
             "User-Agent": user_agent,
             "Accept-Language": accept_language or DEFAULT_ACCEPT_LANGUAGE,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         }
-        for user_agent in user_agents
-        if str(user_agent or "").strip()
-    ]
+        headers.update(build_facebook_navigation_hint_headers(user_agent))
+        candidates.append(headers)
 
     out: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -302,6 +392,30 @@ def build_uid_probe_header_candidates() -> list[dict[str, str]]:
         seen.add(key)
         out.append(item)
     return out
+
+
+def build_facebook_navigation_hint_headers(user_agent: str) -> dict[str, str]:
+    value = str(user_agent or "").lower()
+    platform = '"Windows"'
+    mobile = "?0"
+    if "android" in value:
+        platform = '"Android"'
+        mobile = "?1"
+    elif "iphone" in value or "ipad" in value or "ios" in value:
+        platform = '"iOS"'
+        mobile = "?1"
+    return {
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "sec-ch-ua": '"Chromium";v="140", "Not.A/Brand";v="24", "Google Chrome";v="140"',
+        "sec-ch-ua-mobile": mobile,
+        "sec-ch-ua-platform": platform,
+        "Cache-Control": "max-age=0",
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": "https://www.facebook.com/",
+    }
 
 
 def _extract_uid_from_url_detail(url_raw: Any) -> DirectUid | None:
@@ -382,6 +496,69 @@ def _canonical_from_normalized(normalized: str) -> str:
     path = parsed.path or "/"
     query = f"?{parsed.query}" if parsed.query else ""
     return f"https://www.facebook.com{path}{query}"
+
+
+def _resolve_uid_from_known_map(raw_input: str, normalized: str, username: str) -> str:
+    known_map = _load_known_uid_map()
+    if not known_map:
+        return ""
+
+    for key in _known_uid_lookup_keys(raw_input, normalized, username):
+        uid = known_map.get(key)
+        if uid:
+            return uid
+    return ""
+
+
+def _load_known_uid_map() -> dict[str, str]:
+    raw_value = ""
+    for key in KNOWN_UID_MAP_ENV_KEYS:
+        raw_value = os.getenv(key, "").strip()
+        if raw_value:
+            break
+    if not raw_value:
+        return {}
+
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+
+    out: dict[str, str] = {}
+    for raw_key, raw_item in parsed.items():
+        key = str(raw_key or "").strip().lower().rstrip("/")
+        uid_value = raw_item.get("uid") if isinstance(raw_item, dict) else raw_item
+        uid = normalize_uid(uid_value)
+        if key and uid:
+            out[key] = uid
+    return out
+
+
+def _known_uid_lookup_keys(raw_input: str, normalized: str, username: str) -> list[str]:
+    candidates = [
+        raw_input,
+        normalized,
+        _canonical_from_normalized(normalized),
+        username,
+    ]
+
+    parsed = _parse_facebook_url(normalized)
+    if parsed:
+        path = (parsed.path or "").strip("/")
+        if path:
+            candidates.extend([path, unquote(path)])
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        key = str(item or "").strip().lower().rstrip("/")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
 
 
 def _uid_result(

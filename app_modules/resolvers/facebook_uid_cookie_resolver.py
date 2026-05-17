@@ -8,7 +8,10 @@ import requests
 from app_modules.core.config import get_config
 from app_modules.resolvers.facebook_cookies import cookie_header, load_cookie_accounts
 from app_modules.resolvers.facebook_uid_resolver import (
+    build_facebook_navigation_hint_headers,
     build_facebook_probe_urls,
+    extract_username_from_url,
+    extract_uid_candidates_from_html,
     extract_uid_from_html,
     extract_uid_from_url,
 )
@@ -80,6 +83,16 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
 
                 uid_from_html = _extract_uid_from_cookie_html(fetch_result.text, account)
                 if uid_from_html:
+                    if _needs_slug_verification(raw) and not _verify_uid_matches_requested_slug(
+                        uid_from_html,
+                        raw,
+                        headers,
+                        timeout,
+                    ):
+                        probe["candidateUid"] = uid_from_html
+                        probe["reason"] = "uid_candidate_rejected_by_slug_verification"
+                        probes.append(probe)
+                        continue
                     probe["foundUid"] = uid_from_html
                     probe["reason"] = "uid_found_in_cookie_html"
                     probes.append(probe)
@@ -127,18 +140,24 @@ def _cookie_probe_url_priority(url: str) -> tuple[int, str]:
 
 
 def _cookie_header_candidates(account) -> list[dict[str, str]]:
-    return [
-        {
+    out: list[dict[str, str]] = []
+    for user_agent in COOKIE_UID_USER_AGENTS:
+        headers = {
             "User-Agent": user_agent,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
             "Cookie": cookie_header(account),
         }
-        for user_agent in COOKIE_UID_USER_AGENTS
-    ]
+        headers.update(build_facebook_navigation_hint_headers(user_agent))
+        out.append(headers)
+    return out
 
 
 def _extract_uid_from_cookie_html(text: str, account) -> str:
+    for uid in extract_uid_candidates_from_html(text):
+        if uid and uid != account.c_user:
+            return uid
+
     uid = extract_uid_from_html(text)
     if uid and uid != account.c_user:
         return uid
@@ -177,3 +196,34 @@ def _fetch_text_with_cookie(
             final_url=url,
             reason=f"request_error:{type(exc).__name__}",
         )
+
+
+def _needs_slug_verification(raw: Any) -> bool:
+    return bool(extract_username_from_url(raw))
+
+
+def _verify_uid_matches_requested_slug(
+    uid: str,
+    raw: Any,
+    headers: Mapping[str, str],
+    timeout: float,
+) -> bool:
+    slug = extract_username_from_url(raw).strip().lower()
+    if not slug:
+        return True
+
+    fetch_result = _fetch_text_with_cookie(
+        f"https://www.facebook.com/profile.php?id={uid}",
+        headers,
+        timeout,
+    )
+    final_url = str(fetch_result.final_url or "").lower()
+    body = str(fetch_result.text or "").lower()
+
+    if "/login" in final_url or "checkpoint" in final_url:
+        return False
+    if extract_username_from_url(fetch_result.final_url).lower() == slug:
+        return True
+    if f"/{slug}" in final_url:
+        return True
+    return slug in body
