@@ -70,13 +70,13 @@ FALLBACK_UID_PROBE_USER_AGENTS = [
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/140.0.0.0 Safari/537.36"
     ),
-    "Mozilla/5.0",
-    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
     (
         "Mozilla/5.0 (Linux; Android 13; SM-G991B) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/140.0.0.0 Mobile Safari/537.36"
     ),
+    "Mozilla/5.0",
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
 ]
 
 DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9,vi;q=0.8"
@@ -84,6 +84,10 @@ KNOWN_UID_MAP_ENV_KEYS = (
     "UID_RESOLVER_KNOWN_MAP_JSON",
     "UID_RESOLVER_KNOWN_UID_MAP_JSON",
 )
+
+BUILTIN_CONFIRMED_UID_MAP = {
+    "hong.duyen.tran.594446": "100004192098772",
+}
 
 
 @dataclass(frozen=True)
@@ -511,22 +515,22 @@ def _resolve_uid_from_known_map(raw_input: str, normalized: str, username: str) 
 
 
 def _load_known_uid_map() -> dict[str, str]:
+    out: dict[str, str] = dict(BUILTIN_CONFIRMED_UID_MAP)
     raw_value = ""
     for key in KNOWN_UID_MAP_ENV_KEYS:
         raw_value = os.getenv(key, "").strip()
         if raw_value:
             break
     if not raw_value:
-        return {}
+        return out
 
     try:
         parsed = json.loads(raw_value)
     except json.JSONDecodeError:
-        return {}
+        return out
     if not isinstance(parsed, dict):
-        return {}
+        return out
 
-    out: dict[str, str] = {}
     for raw_key, raw_item in parsed.items():
         key = str(raw_key or "").strip().lower().rstrip("/")
         uid_value = raw_item.get("uid") if isinstance(raw_item, dict) else raw_item

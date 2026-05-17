@@ -84,6 +84,14 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(fetch_text.call_count, 0)
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_builtin_confirmed_uid_map_resolves_hong_duyen_before_network(self, fetch_text):
+        result = resolve_uid_from_any_input("https://www.facebook.com/hong.duyen.tran.594446")
+
+        self.assertEqual(result.uid, "100004192098772")
+        self.assertEqual(result.source, "uid_known_map")
+        self.assertEqual(fetch_text.call_count, 0)
+
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_four_required_link_shapes_resolve_before_checking(self, fetch_text):
         numeric = resolve_uid_from_any_input("http://facebook.com/61574756686411")
         self.assertEqual(numeric.uid, "61574756686411")
