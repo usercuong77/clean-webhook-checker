@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.env
+local_secrets/*
+!local_secrets/.gitignore
+!local_secrets/facebook_cookies.example.txt

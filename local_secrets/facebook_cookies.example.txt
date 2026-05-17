@@ -1,0 +1,9 @@
+[
+  {
+    "c_user": "100000000000000",
+    "xs": "MASKED",
+    "datr": "MASKED",
+    "fr": "MASKED",
+    "sb": "MASKED"
+  }
+]
