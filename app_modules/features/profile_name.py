@@ -21,10 +21,19 @@ PROFILE_NAME_BLOCKLIST = [
     "log in",
     "login",
     "sign up",
+    "log in or sign up to view",
     "dang nhap",
     "dang nh?p",
+    "dang nhap hoac dang ky de xem",
     "tao tai khoan",
     "t?o tai kho?n",
+    "dang ky de xem",
+    "đăng nhập",
+    "đăng ký",
+    "đăng nhập hoặc đăng ký để xem",
+    "ÄÄng nháº­p",
+    "ÄÄng kÃ½",
+    "ÄÄng nháº­p hoáº·c ÄÄng kÃ½ Äá» xem",
     "create new account",
     "forgot password",
     "quen mat khau",
@@ -216,7 +225,7 @@ def is_valid_profile_name(raw_name: str) -> bool:
         return False
 
     low = name.lower()
-    if any(item in low for item in PROFILE_NAME_BLOCKLIST):
+    if any(str(item).lower() in low for item in PROFILE_NAME_BLOCKLIST):
         return False
 
     return bool(LETTER_RE.search(name))

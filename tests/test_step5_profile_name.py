@@ -39,6 +39,13 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertFalse(is_valid_profile_name("Error"))
         self.assertFalse(is_valid_profile_name("Trình duyệt này không được hỗ trợ"))
         self.assertFalse(is_valid_profile_name("This browser isn't supported"))
+        self.assertFalse(is_valid_profile_name("\u0110\u0103ng nh\u1eadp ho\u1eb7c \u0111\u0103ng k\u00fd \u0111\u1ec3 xem"))
+        self.assertFalse(
+            is_valid_profile_name(
+                "\u00c4\u0090\u00c4\u0083ng nh\u00e1\u00ba\u00adp ho\u00e1\u00ba\u00b7c "
+                "\u00c4\u0091\u00c4\u0083ng k\u00c3\u00bd \u00c4\u0091\u00e1\u00bb\u0083 xem"
+            )
+        )
         self.assertFalse(is_valid_profile_name("123456789"))
 
     def test_builds_username_and_uid_urls(self):
