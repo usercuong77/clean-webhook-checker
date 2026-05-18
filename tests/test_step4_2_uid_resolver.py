@@ -104,6 +104,14 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(result.source, "uid_known_map")
         self.assertEqual(fetch_text.call_count, 0)
 
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_builtin_confirmed_uid_map_resolves_vo_duy_before_network(self, fetch_text):
+        result = resolve_uid_from_any_input("https://www.facebook.com/vo.duy.0910")
+
+        self.assertEqual(result.uid, "100010211341364")
+        self.assertEqual(result.source, "uid_known_map")
+        self.assertEqual(fetch_text.call_count, 0)
+
     @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_username_cookie_preflight_runs_before_public_probe(self, fetch_text, cookie_fallback):
@@ -118,7 +126,7 @@ class Step42UidResolverTests(unittest.TestCase):
             },
         )()
 
-        result = resolve_uid_from_any_input("https://www.facebook.com/vo.duy.0910")
+        result = resolve_uid_from_any_input("https://www.facebook.com/preflight.test.0910")
 
         self.assertEqual(result.uid, "100000000000321")
         self.assertEqual(result.source, "uid_cookie_probe")
