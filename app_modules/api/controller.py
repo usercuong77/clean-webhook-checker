@@ -7,6 +7,7 @@ from app_modules.checkers.live_die import check_live_die
 from app_modules.core.config import get_config
 from app_modules.features.latest_post import get_latest_post
 from app_modules.features.profile_name import choose_profile_name
+from app_modules.features.viplike import create_viplike_order, get_viplike_packages
 from app_modules.resolvers.uid_resolver import resolve_input
 
 
@@ -41,6 +42,31 @@ class RealtimeBulkJob(BaseModel):
 
 class RealtimeBulkRequest(BaseModel):
     jobs: list[RealtimeBulkJob] = Field(default_factory=list)
+
+
+class VipLikeOrderRequest(BaseModel):
+    uid: str = Field(default="")
+    postId: str = Field(default="")
+    post_id: str = Field(default="")
+    objectId: str = Field(default="")
+    object_id: str = Field(default="")
+    postLink: str = Field(default="")
+    post_link: str = Field(default="")
+    link: str = Field(default="")
+    packageName: str = Field(default="")
+    package_name: str = Field(default="")
+    endpoint: str = Field(default="")
+    quantity: int = Field(default=0)
+    reactionType: str = Field(default="")
+    reaction_type: str = Field(default="")
+    reactionTypes: list[str] | None = Field(default=None)
+    reaction_types: list[str] | None = Field(default=None)
+    reactions: list[str] | str | None = Field(default=None)
+    dedupeKey: str = Field(default="")
+    dedupe_key: str = Field(default="")
+    confirm: bool = Field(default=False)
+    dryRun: bool = Field(default=False)
+    dry_run: bool = Field(default=False)
 
 
 def health_payload() -> dict[str, Any]:
@@ -90,6 +116,14 @@ def latest_post_input(req: LatestPostRequest) -> dict[str, Any]:
     result["username"] = resolved.username
     result["canonicalUrl"] = resolved.canonical_url
     return result
+
+
+def viplike_packages_input(refresh: bool = False, include_raw: bool = False) -> dict[str, Any]:
+    return get_viplike_packages(refresh=refresh, include_raw=include_raw)
+
+
+def viplike_order_input(req: VipLikeOrderRequest) -> dict[str, Any]:
+    return create_viplike_order(req.dict())
 
 
 def _resolver_debug_summary(resolved) -> dict[str, Any]:

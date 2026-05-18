@@ -5,10 +5,13 @@ from app_modules.api.controller import (
     CheckRequest,
     LatestPostRequest,
     RealtimeBulkRequest,
+    VipLikeOrderRequest,
     check_input,
     health_payload,
     latest_post_input,
     realtime_check_bulk,
+    viplike_order_input,
+    viplike_packages_input,
 )
 from app_modules.core.config import get_config
 from app_modules.telegram.telegram_relay import relay_status, relay_telegram_webhook
@@ -40,6 +43,8 @@ def root() -> dict:
                 "/latest-post",
                 "/checkpost",
                 "/realtime/check-bulk",
+                "/viplike/packages",
+                "/viplike/order",
             ],
         }
     )
@@ -66,6 +71,24 @@ def latest_post(req: LatestPostRequest, x_api_key: str | None = Header(default=N
 def realtime_bulk(req: RealtimeBulkRequest, x_api_key: str | None = Header(default=None)) -> dict:
     require_api_key(x_api_key)
     return realtime_check_bulk(req)
+
+
+@app.get("/viplike/packages")
+@app.get("/viplike/packages/")
+def viplike_packages(
+    refresh: bool = False,
+    includeRaw: bool = False,
+    x_api_key: str | None = Header(default=None),
+) -> dict:
+    require_api_key(x_api_key)
+    return viplike_packages_input(refresh=refresh, include_raw=includeRaw)
+
+
+@app.post("/viplike/order")
+@app.post("/viplike/order/")
+def viplike_order(req: VipLikeOrderRequest, x_api_key: str | None = Header(default=None)) -> dict:
+    require_api_key(x_api_key)
+    return viplike_order_input(req)
 
 
 @app.post("/webhook/telegram")
