@@ -77,6 +77,7 @@ DEFAULT_PROFILE_NAME_MAX_REQUESTS = 12
 BUILTIN_CONFIRMED_PROFILE_NAME_MAP = {
     "100080441816993": "Ng Trinh",
     "100010211341364": "Võ Khắc Duy",
+    "100041007767995": "Nguyễn Hoàng Trung Nguyên",
 }
 _NAME_CACHE: OrderedDict[str, str] = OrderedDict()
 

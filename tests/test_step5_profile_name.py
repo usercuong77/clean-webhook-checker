@@ -182,6 +182,14 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result.source, "profile_name_known_map")
         self.assertEqual(fetch_text.call_count, 0)
 
+    @patch("app_modules.features.profile_name._fetch_text")
+    def test_known_profile_name_resolves_caubeoooo_before_network(self, fetch_text):
+        result = resolve_profile_name(_resolved(uid="100041007767995", username="caubeoooo"))
+
+        self.assertEqual(result.name, "Nguyễn Hoàng Trung Nguyên")
+        self.assertEqual(result.source, "profile_name_known_map")
+        self.assertEqual(fetch_text.call_count, 0)
+
     @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
     @patch("app_modules.features.profile_name._fetch_text")
     def test_profile_name_uses_request_budget(self, fetch_text, load_accounts):
