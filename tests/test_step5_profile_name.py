@@ -166,6 +166,31 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(second, "Kiều Anh")
         self.assertEqual(fetch_text.call_count, 1)
 
+    @patch("app_modules.features.profile_name._fetch_text")
+    def test_known_profile_name_resolves_before_network(self, fetch_text):
+        result = resolve_profile_name(_resolved(uid="100080441816993", username="ng.trinh.498077"))
+
+        self.assertEqual(result.name, "Ng Trinh")
+        self.assertEqual(result.source, "profile_name_known_map")
+        self.assertEqual(fetch_text.call_count, 0)
+
+    @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
+    @patch("app_modules.features.profile_name._fetch_text")
+    def test_profile_name_uses_request_budget(self, fetch_text, load_accounts):
+        fetch_text.return_value = _fetch_result(
+            200,
+            "<title>Facebook</title>",
+            "https://www.facebook.com/budget.user",
+            "ok",
+        )
+
+        with patch.dict("app_modules.features.profile_name.os.environ", {"PROFILE_NAME_MAX_REQUESTS": "2"}, clear=False):
+            result = resolve_profile_name(_resolved(uid="100000000000321", username="budget.user"))
+
+        self.assertEqual(result.name, "")
+        self.assertEqual(result.reason, "name_not_found_budget")
+        self.assertEqual(fetch_text.call_count, 2)
+
 
 def _resolved(uid="", username=""):
     return ResolvedInput(
