@@ -72,29 +72,8 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
 
     requested_mode, probe = dispatch_mode(resolved.uid, normalized_mode)
     executed_mode = "1" if requested_mode == "all" else requested_mode
-    probe = _guard_untrusted_username_silhouette(resolved, probe)
     reason = probe.reason if requested_mode != "all" else f"all_currently_mode1_only:{probe.reason}"
     return _from_probe_result(probe, reason, [resolver_probe], executed_mode, requested_mode)
-
-
-def _guard_untrusted_username_silhouette(resolved: ResolvedInput, probe: ProbeResult) -> ProbeResult:
-    if probe.status != "LIVE" or probe.source != "mode1_graph_public":
-        return probe
-    if not resolved.username:
-        return probe
-    if resolved.source not in {"uid_html_probe", "uid_cookie_probe", "uid_final_url"}:
-        return probe
-    if probe.details.get("isSilhouette") is not True:
-        return probe
-
-    return ProbeResult(
-        status="DIE",
-        confidence="weak",
-        source=probe.source,
-        reason="graph_silhouette_untrusted_username_uid",
-        http_code=probe.http_code,
-        details=probe.details,
-    )
 
 
 def _from_probe_result(

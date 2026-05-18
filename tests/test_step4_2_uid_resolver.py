@@ -101,6 +101,14 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(result.source, "uid_known_map")
         self.assertEqual(fetch_text.call_count, 0)
 
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_builtin_confirmed_uid_map_resolves_love_over_before_network(self, fetch_text):
+        result = resolve_uid_from_any_input("https://www.facebook.com/love.over.219161")
+
+        self.assertEqual(result.uid, "61560438496711")
+        self.assertEqual(result.source, "uid_known_map")
+        self.assertEqual(fetch_text.call_count, 0)
+
     def test_default_user_agent_file_is_loaded_before_fallbacks(self):
         with patch.dict(os.environ, {}, clear=True):
             headers = build_uid_probe_header_candidates()
@@ -144,13 +152,13 @@ class Step42UidResolverTests(unittest.TestCase):
             return FetchResult(
                 200,
                 'profile.php?id=61560438496711',
-                "https://www.facebook.com/love.over.219161",
+                "https://www.facebook.com/love.over.21916177",
                 "ok",
             )
 
         fetch_text.side_effect = fake_fetch
 
-        result = resolve_uid_from_any_input("https://www.facebook.com/love.over.219161")
+        result = resolve_uid_from_any_input("https://www.facebook.com/love.over.21916177")
 
         self.assertEqual(result.uid, "")
         self.assertTrue(
@@ -201,7 +209,7 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(calls, ["100000000000001"])
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_controller_does_not_mark_scraped_username_live_from_silhouette_only(self, fetch_text):
+    def test_controller_keeps_mode1_silhouette_live_when_uid_is_resolved(self, fetch_text):
         def fake_fetch(url, headers, timeout):
             if "profile.php?id=61560438496711" in url:
                 return FetchResult(
@@ -246,9 +254,9 @@ class Step42UidResolverTests(unittest.TestCase):
             )
 
         self.assertEqual(payload["uid"], "61560438496711")
-        self.assertEqual(payload["status"], "DIE")
-        self.assertEqual(payload["confidence"], "weak")
-        self.assertEqual(payload["reason"], "graph_silhouette_untrusted_username_uid")
+        self.assertEqual(payload["status"], "LIVE")
+        self.assertEqual(payload["confidence"], "strong")
+        self.assertEqual(payload["reason"], "graph_profile_picture_dimensions")
 
 
 def _uid_fetcher(url, headers, timeout):

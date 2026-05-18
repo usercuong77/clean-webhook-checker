@@ -75,6 +75,7 @@ BUILTIN_CONFIRMED_PROFILE_NAME_MAP = {
     "100010211341364": "Vo Khac Duy",
     "100041007767995": "caubeoooo",
     "100042281496124": "PHAM TAN KIET",
+    "61560438496711": "Nghia Le",
 }
 _NAME_CACHE: OrderedDict[str, str] = OrderedDict()
 
