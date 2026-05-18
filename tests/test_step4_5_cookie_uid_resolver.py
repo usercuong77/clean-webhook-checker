@@ -149,7 +149,7 @@ class Step45CookieUidResolverTests(unittest.TestCase):
 
         self.assertEqual(result.uid, "100000000000077")
         self.assertEqual(result.source, "uid_cookie_probe")
-        self.assertEqual(result.reason, "uid_found_in_cookie_preflight:uid_found_in_cookie_html")
+        self.assertEqual(result.reason, "uid_found_in_cookie_html")
         self.assertTrue(any(probe["source"] == "uid_cookie_probe" for probe in result.probes))
 
 

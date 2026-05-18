@@ -36,15 +36,15 @@ class Step3MinimalTests(unittest.TestCase):
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     @patch("app_modules.resolvers.facebook_cookies.DEFAULT_LOCAL_COOKIE_FILE", Path("Z:/missing/facebook_cookies.txt"))
-    def test_username_without_uid_is_unknown(self, fetch_text):
+    def test_username_without_uid_is_die(self, fetch_text):
         fetch_text.return_value = FetchResult(200, "<html></html>", "https://facebook.com/lvmedits", "ok")
 
         payload = check_input(CheckRequest(input="https://facebook.com/lvmedits", mode="1", includeName=True))
-        self.assertEqual(payload["status"], "UNKNOWN")
+        self.assertEqual(payload["status"], "DIE")
         self.assertEqual(payload["username"], "lvmedits")
-        self.assertEqual(payload["name"], "lvmedits")
+        self.assertEqual(payload["name"], "")
         self.assertEqual(payload["source"], "uid_resolver")
-        self.assertEqual(payload["reason"], "uid_not_found_after_public_probe_no_cookie_accounts:uid_required_for_mode1")
+        self.assertEqual(payload["reason"], "uid_not_found_after_public_probe_no_cookie_accounts")
         self.assertGreater(payload["resolverDebug"]["probeCount"], 0)
         self.assertIn("uid_html_probe", payload["resolverDebug"]["sources"])
 

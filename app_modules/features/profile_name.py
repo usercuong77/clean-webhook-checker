@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import html as html_lib
-import json
 import os
 import re
-import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -71,14 +69,6 @@ ATTR_RE = re.compile(
 )
 
 MAX_NAME_CACHE_ITEMS = 1000
-DEFAULT_PROFILE_NAME_TIMEOUT_SEC = 2.0
-DEFAULT_PROFILE_NAME_DEADLINE_SEC = 8.0
-DEFAULT_PROFILE_NAME_MAX_REQUESTS = 12
-BUILTIN_CONFIRMED_PROFILE_NAME_MAP = {
-    "100080441816993": "Ng Trinh",
-    "100010211341364": "Võ Khắc Duy",
-    "100041007767995": "Nguyễn Hoàng Trung Nguyên",
-}
 _NAME_CACHE: OrderedDict[str, str] = OrderedDict()
 
 
@@ -119,11 +109,6 @@ def choose_profile_name(
 def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
     uid = str(resolved.uid or "").strip()
     if uid:
-        known_name = _known_profile_name(uid)
-        if known_name:
-            _cache_put(uid, known_name)
-            return ProfileNameResult(known_name, "profile_name_known_map", "name_found_known_map")
-
         cached = _cache_get(uid)
         if cached:
             return ProfileNameResult(cached, "uid_name_cache", "cache_hit")
@@ -132,24 +117,13 @@ def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
     if not urls:
         return ProfileNameResult("", "profile_name", "no_profile_urls")
 
-    timeout = _profile_name_timeout()
-    deadline_at = time.monotonic() + _profile_name_deadline()
-    max_requests = _profile_name_max_requests()
-    request_count = 0
+    timeout = max(4.0, min(get_config().request_timeout_seconds, 8.0))
     probes: list[dict[str, Any]] = []
 
     for url in urls:
-        if request_count >= max_requests:
-            break
-        request_timeout = _remaining_timeout(deadline_at, timeout)
-        if request_timeout <= 0:
-            break
-
-        request_count += 1
-        fetch = _fetch_text(url, _public_headers(), request_timeout)
+        fetch = _fetch_text(url, _public_headers(), timeout)
         name = extract_profile_name(fetch.text)
         probe = _probe_record("profile_name_public", url, fetch, name)
-        probe["timeoutSec"] = request_timeout
         probes.append(probe)
         if name:
             _cache_put(uid, name)
@@ -160,26 +134,19 @@ def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
         if not account.is_usable:
             continue
         for url, headers, header_label in _cookie_probe_candidates(urls, account):
-            if request_count >= max_requests:
-                break
-            request_timeout = _remaining_timeout(deadline_at, timeout)
-            if request_timeout <= 0:
-                break
-
-            request_count += 1
-            fetch = _fetch_text(url, headers, request_timeout)
+            fetch = _fetch_text(url, headers, timeout)
             if uid and uid not in fetch.text and uid not in fetch.final_url:
-                probe = _probe_record(
-                    "profile_name_cookie",
-                    url,
-                    fetch,
-                    "",
-                    account.masked_id,
-                    "target_uid_not_in_cookie_html",
-                    header_label,
+                probes.append(
+                    _probe_record(
+                        "profile_name_cookie",
+                        url,
+                        fetch,
+                        "",
+                        account.masked_id,
+                        "target_uid_not_in_cookie_html",
+                        header_label,
+                    )
                 )
-                probe["timeoutSec"] = request_timeout
-                probes.append(probe)
                 continue
             name = extract_profile_name(fetch.text)
             probe = _probe_record(
@@ -190,16 +157,12 @@ def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
                 account.masked_id,
                 header_label=header_label,
             )
-            probe["timeoutSec"] = request_timeout
             probes.append(probe)
             if name:
                 _cache_put(uid, name)
                 return ProfileNameResult(name, "profile_name_cookie", "name_found_cookie", probes)
-        if request_count >= max_requests or _remaining_timeout(deadline_at, timeout) <= 0:
-            break
 
-    reason = "name_not_found_budget" if request_count >= max_requests or _remaining_timeout(deadline_at, timeout) <= 0 else "name_not_found"
-    return ProfileNameResult("", "profile_name", reason, probes)
+    return ProfileNameResult("", "profile_name", "name_not_found", probes)
 
 
 def build_profile_name_urls(resolved: ResolvedInput) -> list[str]:
@@ -444,64 +407,6 @@ def _cookie_account_limit() -> int:
         return max(0, int(os.getenv("PROFILE_NAME_COOKIE_ACCOUNT_LIMIT", "2")))
     except ValueError:
         return 2
-
-
-def _known_profile_name(uid: str) -> str:
-    uid_key = str(uid or "").strip()
-    if not uid_key:
-        return ""
-
-    known = dict(BUILTIN_CONFIRMED_PROFILE_NAME_MAP)
-    raw_value = os.getenv("PROFILE_NAME_KNOWN_MAP_JSON", "").strip()
-    if raw_value:
-        try:
-            parsed = json.loads(raw_value)
-        except json.JSONDecodeError:
-            parsed = {}
-        if isinstance(parsed, dict):
-            for raw_uid, raw_name in parsed.items():
-                key = str(raw_uid or "").strip()
-                name = clean_profile_name_candidate(str(raw_name or ""))
-                if key and is_valid_profile_name(name):
-                    known[key] = name
-
-    return known.get(uid_key, "")
-
-
-def _profile_name_timeout() -> float:
-    configured = max(0.5, get_config().request_timeout_seconds)
-    return min(configured, _env_float("PROFILE_NAME_TIMEOUT_SEC", DEFAULT_PROFILE_NAME_TIMEOUT_SEC))
-
-
-def _profile_name_deadline() -> float:
-    return _env_float("PROFILE_NAME_DEADLINE_SEC", DEFAULT_PROFILE_NAME_DEADLINE_SEC)
-
-
-def _profile_name_max_requests() -> int:
-    return _env_int("PROFILE_NAME_MAX_REQUESTS", DEFAULT_PROFILE_NAME_MAX_REQUESTS)
-
-
-def _remaining_timeout(deadline_at: float, preferred_timeout: float) -> float:
-    remaining = deadline_at - time.monotonic()
-    if remaining <= 0:
-        return 0.0
-    return max(0.1, min(preferred_timeout, remaining))
-
-
-def _env_float(key: str, default: float) -> float:
-    try:
-        value = float(os.getenv(key, "").strip() or default)
-    except ValueError:
-        value = default
-    return max(0.1, value)
-
-
-def _env_int(key: str, default: int) -> int:
-    try:
-        value = int(os.getenv(key, "").strip() or default)
-    except ValueError:
-        value = default
-    return max(1, value)
 
 
 def _cache_get(uid: str) -> str:

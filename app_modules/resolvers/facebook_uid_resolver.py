@@ -85,11 +85,6 @@ DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9,vi;q=0.8"
 DEFAULT_UID_PUBLIC_PROBE_TIMEOUT_SEC = 2.5
 DEFAULT_UID_PUBLIC_PROBE_DEADLINE_SEC = 7.0
 DEFAULT_UID_PUBLIC_PROBE_MAX_REQUESTS = 6
-DEFAULT_UID_RESOLUTION_CACHE_TTL_SEC = 6 * 60 * 60
-DEFAULT_UID_COOKIE_PREFLIGHT_TIMEOUT_SEC = 2.5
-DEFAULT_UID_COOKIE_PREFLIGHT_DEADLINE_SEC = 3.5
-DEFAULT_UID_COOKIE_PREFLIGHT_MAX_ACCOUNTS = 1
-DEFAULT_UID_COOKIE_PREFLIGHT_MAX_REQUESTS = 3
 KNOWN_UID_MAP_ENV_KEYS = (
     "UID_RESOLVER_KNOWN_MAP_JSON",
     "UID_RESOLVER_KNOWN_UID_MAP_JSON",
@@ -97,11 +92,7 @@ KNOWN_UID_MAP_ENV_KEYS = (
 
 BUILTIN_CONFIRMED_UID_MAP = {
     "hong.duyen.tran.594446": "100004192098772",
-    "ng.trinh.498077": "100080441816993",
-    "vo.duy.0910": "100010211341364",
-    "caubeoooo": "100041007767995",
 }
-_UID_RESOLUTION_CACHE: dict[str, tuple[str, float]] = {}
 
 
 @dataclass(frozen=True)
@@ -171,38 +162,7 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
             [],
         )
 
-    cached_uid = _resolve_uid_from_memory_cache(value, normalized, username)
-    if cached_uid:
-        return _uid_result(
-            value,
-            cached_uid,
-            username,
-            "uid_memory_cache",
-            "uid_found_in_memory_cache",
-            [],
-        )
-
     probes: list[dict[str, Any]] = []
-    if username and _uid_cookie_preflight_enabled():
-        cookie_preflight = _resolve_uid_with_cookie_fallback(
-            normalized,
-            timeout_sec=_uid_cookie_preflight_timeout(),
-            deadline_sec=_uid_cookie_preflight_deadline(),
-            max_accounts=_uid_cookie_preflight_max_accounts(),
-            max_requests=_uid_cookie_preflight_max_requests(),
-        )
-        probes.extend(cookie_preflight.probes)
-        if cookie_preflight.uid:
-            _remember_uid_resolution(value, normalized, username, cookie_preflight.uid)
-            return _uid_result(
-                value,
-                cookie_preflight.uid,
-                username,
-                cookie_preflight.source,
-                f"uid_found_in_cookie_preflight:{cookie_preflight.reason}",
-                probes,
-            )
-
     timeout = _uid_public_probe_timeout()
     deadline_at = time.monotonic() + _uid_public_probe_deadline()
     max_requests = _uid_public_probe_max_requests()
@@ -233,7 +193,6 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                 probe["foundUid"] = uid_from_html
                 probe["reason"] = "uid_found_in_html"
                 probes.append(probe)
-                _remember_uid_resolution(value, normalized, username, uid_from_html)
                 return _uid_result(
                     value,
                     uid_from_html,
@@ -248,7 +207,6 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                 probe["foundUid"] = uid_from_final_url
                 probe["reason"] = "uid_found_in_final_url"
                 probes.append(probe)
-                _remember_uid_resolution(value, normalized, username, uid_from_final_url)
                 return _uid_result(
                     value,
                     uid_from_final_url,
@@ -264,7 +222,6 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
 
     cookie_result = _resolve_uid_with_cookie_fallback(normalized)
     if cookie_result.uid:
-        _remember_uid_resolution(value, normalized, username, cookie_result.uid)
         return _uid_result(
             value,
             cookie_result.uid,
@@ -575,43 +532,6 @@ def _resolve_uid_from_known_map(raw_input: str, normalized: str, username: str) 
     return ""
 
 
-def _resolve_uid_from_memory_cache(raw_input: str, normalized: str, username: str) -> str:
-    _purge_expired_uid_cache()
-    for key in _known_uid_lookup_keys(raw_input, normalized, username):
-        item = _UID_RESOLUTION_CACHE.get(key)
-        if not item:
-            continue
-        uid, expires_at = item
-        if expires_at > time.monotonic() and normalize_uid(uid):
-            return uid
-    return ""
-
-
-def _remember_uid_resolution(raw_input: str, normalized: str, username: str, uid_raw: Any) -> None:
-    uid = normalize_uid(uid_raw)
-    if not uid:
-        return
-    expires_at = time.monotonic() + _uid_resolution_cache_ttl()
-    for key in _known_uid_lookup_keys(raw_input, normalized, username):
-        if key:
-            _UID_RESOLUTION_CACHE[key] = (uid, expires_at)
-
-
-def _purge_expired_uid_cache() -> None:
-    now = time.monotonic()
-    expired = [key for key, item in _UID_RESOLUTION_CACHE.items() if item[1] <= now]
-    for key in expired:
-        _UID_RESOLUTION_CACHE.pop(key, None)
-
-
-def _uid_resolution_cache_ttl() -> float:
-    return _env_float("UID_RESOLUTION_CACHE_TTL_SEC", DEFAULT_UID_RESOLUTION_CACHE_TTL_SEC)
-
-
-def _clear_uid_resolution_cache_for_tests() -> None:
-    _UID_RESOLUTION_CACHE.clear()
-
-
 def _load_known_uid_map() -> dict[str, str]:
     out: dict[str, str] = dict(BUILTIN_CONFIRMED_UID_MAP)
     raw_value = ""
@@ -772,37 +692,10 @@ def _header_label(headers: Mapping[str, str]) -> str:
     return user_agent[:80]
 
 
-def _uid_cookie_preflight_enabled() -> bool:
-    return _env_bool("UID_COOKIE_PREFLIGHT_ENABLED", True)
-
-
-def _uid_cookie_preflight_timeout() -> float:
-    return _env_float("UID_COOKIE_PREFLIGHT_TIMEOUT_SEC", DEFAULT_UID_COOKIE_PREFLIGHT_TIMEOUT_SEC)
-
-
-def _uid_cookie_preflight_deadline() -> float:
-    return _env_float("UID_COOKIE_PREFLIGHT_DEADLINE_SEC", DEFAULT_UID_COOKIE_PREFLIGHT_DEADLINE_SEC)
-
-
-def _uid_cookie_preflight_max_accounts() -> int:
-    return _env_int("UID_COOKIE_PREFLIGHT_MAX_ACCOUNTS", DEFAULT_UID_COOKIE_PREFLIGHT_MAX_ACCOUNTS)
-
-
-def _uid_cookie_preflight_max_requests() -> int:
-    return _env_int("UID_COOKIE_PREFLIGHT_MAX_REQUESTS", DEFAULT_UID_COOKIE_PREFLIGHT_MAX_REQUESTS)
-
-
-def _env_bool(key: str, default: bool) -> bool:
-    value = os.getenv(key, "").strip().lower()
-    if not value:
-        return default
-    return value in {"1", "true", "yes", "on"}
-
-
-def _resolve_uid_with_cookie_fallback(normalized: str, **kwargs):
+def _resolve_uid_with_cookie_fallback(normalized: str):
     from app_modules.resolvers.facebook_uid_cookie_resolver import resolve_uid_with_cookies
 
-    return resolve_uid_with_cookies(normalized, **kwargs)
+    return resolve_uid_with_cookies(normalized)
 
 
 def _final_uid_not_found_reason(cookie_reason: str) -> str:

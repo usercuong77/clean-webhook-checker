@@ -7,7 +7,6 @@ from app_modules.api.controller import CheckRequest, check_input
 from app_modules.resolvers.facebook_uid_resolver import (
     FetchResult,
     build_facebook_probe_urls,
-    _clear_uid_resolution_cache_for_tests,
     extract_uid_candidates_from_html,
     extract_username_from_url,
     extract_uid_from_html,
@@ -20,9 +19,6 @@ from app_modules.checkers.probe_result import ProbeResult
 
 
 class Step42UidResolverTests(unittest.TestCase):
-    def tearDown(self):
-        _clear_uid_resolution_cache_for_tests()
-
     def test_extract_uid_shortcuts_from_url(self):
         self.assertEqual(
             extract_uid_from_url("https://www.facebook.com/profile.php?id=100041775009544"),
@@ -96,86 +92,6 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(result.source, "uid_known_map")
         self.assertEqual(fetch_text.call_count, 0)
 
-    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_builtin_confirmed_uid_map_resolves_ng_trinh_before_network(self, fetch_text):
-        result = resolve_uid_from_any_input("https://www.facebook.com/ng.trinh.498077")
-
-        self.assertEqual(result.uid, "100080441816993")
-        self.assertEqual(result.source, "uid_known_map")
-        self.assertEqual(fetch_text.call_count, 0)
-
-    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_builtin_confirmed_uid_map_resolves_vo_duy_before_network(self, fetch_text):
-        result = resolve_uid_from_any_input("https://www.facebook.com/vo.duy.0910")
-
-        self.assertEqual(result.uid, "100010211341364")
-        self.assertEqual(result.source, "uid_known_map")
-        self.assertEqual(fetch_text.call_count, 0)
-
-    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_builtin_confirmed_uid_map_resolves_caubeoooo_before_network(self, fetch_text):
-        result = resolve_uid_from_any_input("https://www.facebook.com/caubeoooo/")
-
-        self.assertEqual(result.uid, "100041007767995")
-        self.assertEqual(result.source, "uid_known_map")
-        self.assertEqual(fetch_text.call_count, 0)
-
-    @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
-    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_username_cookie_preflight_runs_before_public_probe(self, fetch_text, cookie_fallback):
-        cookie_fallback.return_value = type(
-            "CookieResult",
-            (),
-            {
-                "uid": "100000000000321",
-                "source": "uid_cookie_probe",
-                "reason": "uid_found_in_cookie_html",
-                "probes": [{"source": "uid_cookie_probe", "reason": "uid_found_in_cookie_html"}],
-            },
-        )()
-
-        result = resolve_uid_from_any_input("https://www.facebook.com/preflight.test.0910")
-
-        self.assertEqual(result.uid, "100000000000321")
-        self.assertEqual(result.source, "uid_cookie_probe")
-        self.assertEqual(result.reason, "uid_found_in_cookie_preflight:uid_found_in_cookie_html")
-        self.assertEqual(fetch_text.call_count, 0)
-        self.assertEqual(cookie_fallback.call_count, 1)
-        self.assertEqual(cookie_fallback.call_args.kwargs["max_accounts"], 1)
-        self.assertEqual(cookie_fallback.call_args.kwargs["max_requests"], 3)
-
-    @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
-    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_successful_username_resolution_is_cached(self, fetch_text, cookie_fallback):
-        cookie_fallback.return_value = type(
-            "CookieResult",
-            (),
-            {
-                "uid": "",
-                "source": "uid_cookie_resolver",
-                "reason": "not_called",
-                "probes": [],
-            },
-        )()
-        fetch_text.return_value = FetchResult(
-            200,
-            '{"userID":"100000000000123"}',
-            "https://mbasic.facebook.com/cache.test.12345",
-            "ok",
-        )
-
-        first = resolve_uid_from_any_input("https://www.facebook.com/cache.test.12345")
-        fetch_text.reset_mock()
-        cookie_fallback.reset_mock()
-        second = resolve_uid_from_any_input("https://www.facebook.com/cache.test.12345")
-
-        self.assertEqual(first.uid, "100000000000123")
-        self.assertEqual(first.source, "uid_html_probe")
-        self.assertEqual(second.uid, "100000000000123")
-        self.assertEqual(second.source, "uid_memory_cache")
-        self.assertEqual(fetch_text.call_count, 0)
-        self.assertEqual(cookie_fallback.call_count, 0)
-
     @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_unresolved_username_uses_public_probe_budget(self, fetch_text, cookie_fallback):
@@ -214,7 +130,7 @@ class Step42UidResolverTests(unittest.TestCase):
             headers = build_uid_probe_header_candidates()
 
         self.assertGreaterEqual(len(headers), 1)
-        self.assertIn("Windows NT 10.0", headers[0]["User-Agent"])
+        self.assertIn("Android 13", headers[0]["User-Agent"])
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_four_required_link_shapes_resolve_before_checking(self, fetch_text):

@@ -20,17 +20,17 @@ from app_modules.resolvers.facebook_uid_resolver import (
 
 COOKIE_UID_USER_AGENTS = (
     (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    (
         "Mozilla/5.0 (Linux; U; Android 4.0.3; en-us; Galaxy Nexus Build/IML74K) "
         "AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.30"
     ),
     (
         "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) "
         "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
     ),
 )
 DEFAULT_COOKIE_UID_TIMEOUT_SEC = 2.5
@@ -59,14 +59,7 @@ class CookieFetchResult:
     reason: str
 
 
-def resolve_uid_with_cookies(
-    raw: Any,
-    *,
-    timeout_sec: float | None = None,
-    deadline_sec: float | None = None,
-    max_accounts: int | None = None,
-    max_requests: int | None = None,
-) -> CookieUidResolution:
+def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
     probe_urls = _cookie_probe_urls(raw)
     if not probe_urls:
         return CookieUidResolution("", "uid_cookie_resolver", "no_facebook_probe_urls")
@@ -75,10 +68,10 @@ def resolve_uid_with_cookies(
     if not accounts:
         return CookieUidResolution("", "uid_cookie_resolver", "no_usable_cookie_accounts")
 
-    timeout = _cookie_uid_timeout(timeout_sec)
-    deadline_at = time.monotonic() + _cookie_uid_deadline(deadline_sec)
-    max_accounts = _cookie_uid_max_accounts(max_accounts)
-    max_requests = _cookie_uid_max_requests(max_requests)
+    timeout = _cookie_uid_timeout()
+    deadline_at = time.monotonic() + _cookie_uid_deadline()
+    max_accounts = _cookie_uid_max_accounts()
+    max_requests = _cookie_uid_max_requests()
     request_count = 0
     probes: list[dict[str, Any]] = []
 
@@ -234,28 +227,20 @@ def _fetch_text_with_cookie(
         )
 
 
-def _cookie_uid_timeout(override: float | None = None) -> float:
-    if override is not None:
-        return max(0.1, float(override))
+def _cookie_uid_timeout() -> float:
     configured = max(0.5, get_config().request_timeout_seconds)
     return min(configured, _env_float("UID_COOKIE_PROBE_TIMEOUT_SEC", DEFAULT_COOKIE_UID_TIMEOUT_SEC))
 
 
-def _cookie_uid_deadline(override: float | None = None) -> float:
-    if override is not None:
-        return max(0.1, float(override))
+def _cookie_uid_deadline() -> float:
     return _env_float("UID_COOKIE_PROBE_DEADLINE_SEC", DEFAULT_COOKIE_UID_DEADLINE_SEC)
 
 
-def _cookie_uid_max_accounts(override: int | None = None) -> int:
-    if override is not None:
-        return max(1, int(override))
+def _cookie_uid_max_accounts() -> int:
     return _env_int("UID_COOKIE_PROBE_MAX_ACCOUNTS", DEFAULT_COOKIE_UID_MAX_ACCOUNTS)
 
 
-def _cookie_uid_max_requests(override: int | None = None) -> int:
-    if override is not None:
-        return max(1, int(override))
+def _cookie_uid_max_requests() -> int:
     return _env_int("UID_COOKIE_PROBE_MAX_REQUESTS", DEFAULT_COOKIE_UID_MAX_REQUESTS)
 
 

@@ -61,15 +61,6 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
     }
 
     if not resolved.uid:
-        if resolved.username:
-            return LiveDieResult(
-                status="UNKNOWN",
-                confidence="weak",
-                source=resolved.source,
-                reason=f"{resolved.reason or 'uid_not_resolved'}:uid_required_for_mode1",
-                http_code=0,
-                probes=[resolver_probe],
-            )
         return LiveDieResult(
             status="DIE",
             confidence="weak",
