@@ -1,3 +1,4 @@
+import requests
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -11,7 +12,7 @@ from app_modules.api.controller import (
     realtime_check_bulk,
 )
 from app_modules.core.config import get_config
-from app_modules.telegram.telegram_relay import relay_status, relay_telegram_webhook
+from app_modules.telegram.telegram_relay import build_relay_target_url, relay_status, relay_telegram_webhook
 
 
 app = FastAPI(title="Clean Webhook Checker", version="step16-clean-webhook-checker-local")
@@ -75,3 +76,51 @@ async def webhook_telegram(request: Request, background_tasks: BackgroundTasks) 
     background_tasks.add_task(relay_telegram_webhook, body or b"{}", content_type)
     return JSONResponse({"ok": True, "queued": True}, status_code=200)
 
+
+@app.post("/admin/realtime-uid-step24")
+async def admin_realtime_uid_step24(request: Request) -> JSONResponse:
+    payload = await request.json()
+    action = str(payload.get("action", "")).strip()
+    if action not in {
+        "snapshot",
+        "configure",
+        "ensure_sheet",
+        "preview",
+        "run_once",
+        "install_trigger",
+        "trigger_status",
+        "delete_triggers",
+    }:
+        raise HTTPException(status_code=400, detail="invalid_realtime_uid_action")
+
+    target_url = build_relay_target_url()
+    if not target_url:
+        raise HTTPException(status_code=500, detail="telegram_relay_target_missing")
+
+    upstream_payload = {
+        "realtime_uid_admin_action": action,
+        "includeSheet": bool(payload.get("includeSheet", False)),
+    }
+    for key in ("spreadsheetId", "sheetName", "renderBaseUrl", "batchLimit"):
+        if key in payload:
+            upstream_payload[key] = payload[key]
+
+    upstream = requests.post(
+        target_url,
+        json=upstream_payload,
+        timeout=60,
+        allow_redirects=True,
+    )
+    try:
+        upstream_body = upstream.json()
+    except ValueError:
+        upstream_body = {"rawBody": upstream.text[:2000]}
+
+    return JSONResponse(
+        {
+            "ok": 200 <= upstream.status_code < 300,
+            "upstreamStatus": upstream.status_code,
+            "upstream": upstream_body,
+        },
+        status_code=200 if 200 <= upstream.status_code < 300 else 502,
+    )
