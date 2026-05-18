@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -31,6 +33,10 @@ COOKIE_UID_USER_AGENTS = (
         "Chrome/120.0.0.0 Safari/537.36"
     ),
 )
+DEFAULT_COOKIE_UID_TIMEOUT_SEC = 2.5
+DEFAULT_COOKIE_UID_DEADLINE_SEC = 7.0
+DEFAULT_COOKIE_UID_MAX_ACCOUNTS = 2
+DEFAULT_COOKIE_UID_MAX_REQUESTS = 8
 
 
 @dataclass(frozen=True)
@@ -62,13 +68,24 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
     if not accounts:
         return CookieUidResolution("", "uid_cookie_resolver", "no_usable_cookie_accounts")
 
-    timeout = max(5.0, get_config().request_timeout_seconds)
+    timeout = _cookie_uid_timeout()
+    deadline_at = time.monotonic() + _cookie_uid_deadline()
+    max_accounts = _cookie_uid_max_accounts()
+    max_requests = _cookie_uid_max_requests()
+    request_count = 0
     probes: list[dict[str, Any]] = []
 
-    for account in accounts:
+    for account in accounts[:max_accounts]:
         for probe_url in probe_urls:
             for headers in _cookie_header_candidates(account):
-                fetch_result = _fetch_text_with_cookie(probe_url, headers, timeout)
+                if request_count >= max_requests:
+                    break
+                request_timeout = _remaining_timeout(deadline_at, timeout)
+                if request_timeout <= 0:
+                    break
+
+                request_count += 1
+                fetch_result = _fetch_text_with_cookie(probe_url, headers, request_timeout)
                 probe = {
                     "source": "uid_cookie_probe",
                     "url": probe_url,
@@ -79,15 +96,23 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
                     "cookieSource": account.source,
                     "cookieIndex": account.index,
                     "userAgent": _header_label(headers),
+                    "timeoutSec": request_timeout,
                 }
 
                 uid_from_html = _extract_uid_from_cookie_html(fetch_result.text, account)
                 if uid_from_html:
-                    if _needs_slug_verification(raw) and not _verify_uid_matches_requested_slug(
-                        uid_from_html,
-                        raw,
-                        headers,
-                        timeout,
+                    verification_timeout = _remaining_timeout(deadline_at, timeout)
+                    if (
+                        _needs_slug_verification(raw)
+                        and (
+                            verification_timeout <= 0
+                            or not _verify_uid_matches_requested_slug(
+                                uid_from_html,
+                                raw,
+                                headers,
+                                verification_timeout,
+                            )
+                        )
                     ):
                         probe["candidateUid"] = uid_from_html
                         probe["reason"] = "uid_candidate_rejected_by_slug_verification"
@@ -116,11 +141,15 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
                     )
 
                 probes.append(probe)
+            if request_count >= max_requests or _remaining_timeout(deadline_at, timeout) <= 0:
+                break
+        if request_count >= max_requests or _remaining_timeout(deadline_at, timeout) <= 0:
+            break
 
     return CookieUidResolution(
         "",
         "uid_cookie_resolver",
-        "uid_not_found_after_cookie_probe",
+        "uid_not_found_after_cookie_probe_budget",
         probes,
     )
 
@@ -196,6 +225,46 @@ def _fetch_text_with_cookie(
             final_url=url,
             reason=f"request_error:{type(exc).__name__}",
         )
+
+
+def _cookie_uid_timeout() -> float:
+    configured = max(0.5, get_config().request_timeout_seconds)
+    return min(configured, _env_float("UID_COOKIE_PROBE_TIMEOUT_SEC", DEFAULT_COOKIE_UID_TIMEOUT_SEC))
+
+
+def _cookie_uid_deadline() -> float:
+    return _env_float("UID_COOKIE_PROBE_DEADLINE_SEC", DEFAULT_COOKIE_UID_DEADLINE_SEC)
+
+
+def _cookie_uid_max_accounts() -> int:
+    return _env_int("UID_COOKIE_PROBE_MAX_ACCOUNTS", DEFAULT_COOKIE_UID_MAX_ACCOUNTS)
+
+
+def _cookie_uid_max_requests() -> int:
+    return _env_int("UID_COOKIE_PROBE_MAX_REQUESTS", DEFAULT_COOKIE_UID_MAX_REQUESTS)
+
+
+def _remaining_timeout(deadline_at: float, preferred_timeout: float) -> float:
+    remaining = deadline_at - time.monotonic()
+    if remaining <= 0:
+        return 0.0
+    return max(0.1, min(preferred_timeout, remaining))
+
+
+def _env_float(key: str, default: float) -> float:
+    try:
+        value = float(os.getenv(key, "").strip() or default)
+    except ValueError:
+        value = default
+    return max(0.1, value)
+
+
+def _env_int(key: str, default: int) -> int:
+    try:
+        value = int(os.getenv(key, "").strip() or default)
+    except ValueError:
+        value = default
+    return max(1, value)
 
 
 def _needs_slug_verification(raw: Any) -> bool:

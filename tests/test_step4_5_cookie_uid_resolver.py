@@ -108,6 +108,28 @@ class Step45CookieUidResolverTests(unittest.TestCase):
 
     @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)
     @patch("app_modules.resolvers.facebook_uid_cookie_resolver._fetch_text_with_cookie")
+    def test_cookie_resolver_uses_request_budget(self, fetch_text):
+        fetch_text.return_value = CookieFetchResult(
+            200,
+            "<html></html>",
+            "https://mbasic.facebook.com/nguyen.trung.hieu.77803077",
+            "ok",
+        )
+
+        env = {
+            "UID_COOKIE_PROBE_MAX_REQUESTS": "2",
+            "UID_COOKIE_PROBE_TIMEOUT_SEC": "1",
+            "UID_COOKIE_PROBE_DEADLINE_SEC": "5",
+        }
+        with patch.dict("app_modules.resolvers.facebook_uid_cookie_resolver.os.environ", env, clear=False):
+            result = resolve_uid_with_cookies("https://www.facebook.com/nguyen.trung.hieu.77803077")
+
+        self.assertEqual(result.uid, "")
+        self.assertEqual(result.reason, "uid_not_found_after_cookie_probe_budget")
+        self.assertEqual(fetch_text.call_count, 2)
+
+    @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)
+    @patch("app_modules.resolvers.facebook_uid_cookie_resolver._fetch_text_with_cookie")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_public_resolver_falls_back_to_cookie_resolver(self, public_fetch, cookie_fetch):
         public_fetch.return_value = FetchResult(
