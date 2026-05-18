@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -31,6 +33,10 @@ COOKIE_UID_USER_AGENTS = (
         "Chrome/120.0.0.0 Safari/537.36"
     ),
 )
+DEFAULT_UID_COOKIE_PROBE_TIMEOUT_SEC = 2.5
+DEFAULT_UID_COOKIE_PROBE_DEADLINE_SEC = 8.0
+DEFAULT_UID_COOKIE_PROBE_MAX_ACCOUNTS = 1
+DEFAULT_UID_COOKIE_PROBE_MAX_REQUESTS = 9
 
 
 @dataclass(frozen=True)
@@ -62,13 +68,26 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
     if not accounts:
         return CookieUidResolution("", "uid_cookie_resolver", "no_usable_cookie_accounts")
 
-    timeout = max(5.0, get_config().request_timeout_seconds)
+    timeout = _uid_cookie_probe_timeout()
+    deadline_at = time.monotonic() + _uid_cookie_probe_deadline()
+    max_requests = _uid_cookie_probe_max_requests()
+    request_count = 0
     probes: list[dict[str, Any]] = []
 
-    for account in accounts:
+    for account in accounts[: _uid_cookie_probe_max_accounts()]:
+        if request_count >= max_requests or _remaining_timeout(deadline_at, timeout) <= 0:
+            break
         for probe_url in probe_urls:
+            if request_count >= max_requests or _remaining_timeout(deadline_at, timeout) <= 0:
+                break
             for headers in _cookie_header_candidates(account):
-                fetch_result = _fetch_text_with_cookie(probe_url, headers, timeout)
+                if request_count >= max_requests:
+                    break
+                request_timeout = _remaining_timeout(deadline_at, timeout)
+                if request_timeout <= 0:
+                    break
+                request_count += 1
+                fetch_result = _fetch_text_with_cookie(probe_url, headers, request_timeout)
                 probe = {
                     "source": "uid_cookie_probe",
                     "url": probe_url,
@@ -89,7 +108,7 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
                             uid_from_html,
                             raw,
                             headers,
-                            timeout,
+                            _remaining_timeout(deadline_at, timeout),
                         )
                     ):
                         probe["candidateUid"] = uid_from_html
@@ -112,7 +131,7 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
                         uid_from_final_url,
                         raw,
                         headers,
-                        timeout,
+                        _remaining_timeout(deadline_at, timeout),
                     ):
                         probe["candidateUid"] = uid_from_final_url
                         probe["reason"] = "uid_final_url_rejected_by_slug_verification"
@@ -224,6 +243,8 @@ def _verify_uid_matches_requested_slug(
     slug = extract_username_from_url(raw).strip().lower()
     if not slug:
         return True
+    if timeout <= 0:
+        return False
 
     fetch_result = _fetch_text_with_cookie(
         f"https://www.facebook.com/profile.php?id={uid}",
@@ -240,3 +261,36 @@ def _verify_uid_matches_requested_slug(
     if f"/{slug}" in final_url:
         return True
     return slug in body
+
+
+def _uid_cookie_probe_timeout() -> float:
+    return _env_float("UID_COOKIE_PROBE_TIMEOUT_SEC", DEFAULT_UID_COOKIE_PROBE_TIMEOUT_SEC)
+
+
+def _uid_cookie_probe_deadline() -> float:
+    return _env_float("UID_COOKIE_PROBE_DEADLINE_SEC", DEFAULT_UID_COOKIE_PROBE_DEADLINE_SEC)
+
+
+def _uid_cookie_probe_max_accounts() -> int:
+    return max(1, int(_env_float("UID_COOKIE_PROBE_MAX_ACCOUNTS", DEFAULT_UID_COOKIE_PROBE_MAX_ACCOUNTS)))
+
+
+def _uid_cookie_probe_max_requests() -> int:
+    return max(1, int(_env_float("UID_COOKIE_PROBE_MAX_REQUESTS", DEFAULT_UID_COOKIE_PROBE_MAX_REQUESTS)))
+
+
+def _remaining_timeout(deadline_at: float, preferred_timeout: float) -> float:
+    remaining = deadline_at - time.monotonic()
+    if remaining <= 0:
+        return 0.0
+    return max(0.5, min(preferred_timeout, remaining))
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)

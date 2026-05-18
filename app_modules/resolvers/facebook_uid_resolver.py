@@ -4,6 +4,7 @@ import html as html_lib
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -81,6 +82,9 @@ FALLBACK_UID_PROBE_USER_AGENTS = [
 ]
 
 DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9,vi;q=0.8"
+DEFAULT_UID_PUBLIC_PROBE_TIMEOUT_SEC = 2.5
+DEFAULT_UID_PUBLIC_PROBE_DEADLINE_SEC = 8.0
+DEFAULT_UID_PUBLIC_PROBE_MAX_REQUESTS = 6
 KNOWN_UID_MAP_ENV_KEYS = (
     "UID_RESOLVER_KNOWN_MAP_JSON",
     "UID_RESOLVER_KNOWN_UID_MAP_JSON",
@@ -163,11 +167,22 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
         )
 
     probes: list[dict[str, Any]] = []
-    timeout = max(5.0, get_config().request_timeout_seconds)
+    timeout = _uid_public_probe_timeout()
+    deadline_at = time.monotonic() + _uid_public_probe_deadline()
+    max_requests = _uid_public_probe_max_requests()
+    request_count = 0
     for headers in build_uid_probe_header_candidates():
+        if request_count >= max_requests or _remaining_timeout(deadline_at, timeout) <= 0:
+            break
         header_label = _header_label(headers)
         for probe_url in probe_urls:
-            fetch_result = _fetch_text(probe_url, headers, timeout)
+            if request_count >= max_requests:
+                break
+            request_timeout = _remaining_timeout(deadline_at, timeout)
+            if request_timeout <= 0:
+                break
+            request_count += 1
+            fetch_result = _fetch_text(probe_url, headers, request_timeout)
             probe = {
                 "source": "uid_html_probe",
                 "url": probe_url,
@@ -183,7 +198,7 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                     uid_from_html,
                     normalized,
                     headers,
-                    timeout,
+                    _remaining_timeout(deadline_at, timeout),
                 ):
                     probe["candidateUid"] = uid_from_html
                     probe["reason"] = "uid_candidate_rejected_by_slug_verification"
@@ -207,7 +222,7 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                     uid_from_final_url,
                     normalized,
                     headers,
-                    timeout,
+                    _remaining_timeout(deadline_at, timeout),
                 ):
                     probe["candidateUid"] = uid_from_final_url
                     probe["reason"] = "uid_final_url_rejected_by_slug_verification"
@@ -322,6 +337,8 @@ def _verify_uid_matches_requested_slug(
     slug = extract_username_from_url(raw).strip().lower()
     if not slug:
         return True
+    if timeout <= 0:
+        return False
 
     fetch_result = _fetch_text(
         f"https://www.facebook.com/profile.php?id={uid}",
@@ -338,6 +355,35 @@ def _verify_uid_matches_requested_slug(
     if f"/{slug}" in final_url:
         return True
     return slug in body
+
+
+def _uid_public_probe_timeout() -> float:
+    return _env_float("UID_PUBLIC_PROBE_TIMEOUT_SEC", DEFAULT_UID_PUBLIC_PROBE_TIMEOUT_SEC)
+
+
+def _uid_public_probe_deadline() -> float:
+    return _env_float("UID_PUBLIC_PROBE_DEADLINE_SEC", DEFAULT_UID_PUBLIC_PROBE_DEADLINE_SEC)
+
+
+def _uid_public_probe_max_requests() -> int:
+    return max(1, int(_env_float("UID_PUBLIC_PROBE_MAX_REQUESTS", DEFAULT_UID_PUBLIC_PROBE_MAX_REQUESTS)))
+
+
+def _remaining_timeout(deadline_at: float, preferred_timeout: float) -> float:
+    remaining = deadline_at - time.monotonic()
+    if remaining <= 0:
+        return 0.0
+    return max(0.5, min(preferred_timeout, remaining))
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
 
 
 def normalize_facebook_payload_text(raw: Any) -> str:
