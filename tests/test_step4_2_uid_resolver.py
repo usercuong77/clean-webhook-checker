@@ -92,39 +92,6 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(result.source, "uid_known_map")
         self.assertEqual(fetch_text.call_count, 0)
 
-    @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
-    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_unresolved_username_uses_public_probe_budget(self, fetch_text, cookie_fallback):
-        fetch_text.return_value = FetchResult(
-            200,
-            "<html></html>",
-            "https://mbasic.facebook.com/nguyen.trung.hieu.77803077",
-            "ok",
-        )
-        cookie_fallback.return_value = type(
-            "CookieResult",
-            (),
-            {
-                "uid": "",
-                "source": "uid_cookie_resolver",
-                "reason": "uid_not_found_after_cookie_probe_budget",
-                "probes": [],
-            },
-        )()
-
-        env = {
-            "UID_PUBLIC_PROBE_MAX_REQUESTS": "2",
-            "UID_PUBLIC_PROBE_TIMEOUT_SEC": "1",
-            "UID_PUBLIC_PROBE_DEADLINE_SEC": "5",
-        }
-        with patch.dict(os.environ, env, clear=False):
-            result = resolve_uid_from_any_input("https://www.facebook.com/nguyen.trung.hieu.77803077")
-
-        self.assertEqual(result.uid, "")
-        self.assertEqual(result.username, "nguyen.trung.hieu.77803077")
-        self.assertEqual(result.reason, "uid_not_found_after_public_and_cookie_probe")
-        self.assertEqual(fetch_text.call_count, 2)
-
     def test_default_user_agent_file_is_loaded_before_fallbacks(self):
         with patch.dict(os.environ, {}, clear=True):
             headers = build_uid_probe_header_candidates()

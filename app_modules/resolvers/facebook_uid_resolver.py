@@ -4,7 +4,6 @@ import html as html_lib
 import json
 import os
 import re
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -82,9 +81,6 @@ FALLBACK_UID_PROBE_USER_AGENTS = [
 ]
 
 DEFAULT_ACCEPT_LANGUAGE = "en-US,en;q=0.9,vi;q=0.8"
-DEFAULT_UID_PUBLIC_PROBE_TIMEOUT_SEC = 2.5
-DEFAULT_UID_PUBLIC_PROBE_DEADLINE_SEC = 3.0
-DEFAULT_UID_PUBLIC_PROBE_MAX_REQUESTS = 3
 KNOWN_UID_MAP_ENV_KEYS = (
     "UID_RESOLVER_KNOWN_MAP_JSON",
     "UID_RESOLVER_KNOWN_UID_MAP_JSON",
@@ -163,21 +159,11 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
         )
 
     probes: list[dict[str, Any]] = []
-    timeout = _uid_public_probe_timeout()
-    deadline_at = time.monotonic() + _uid_public_probe_deadline()
-    max_requests = _uid_public_probe_max_requests()
-    request_count = 0
+    timeout = max(5.0, get_config().request_timeout_seconds)
     for headers in build_uid_probe_header_candidates():
         header_label = _header_label(headers)
         for probe_url in probe_urls:
-            if request_count >= max_requests:
-                break
-            request_timeout = _remaining_timeout(deadline_at, timeout)
-            if request_timeout <= 0:
-                break
-
-            request_count += 1
-            fetch_result = _fetch_text(probe_url, headers, request_timeout)
+            fetch_result = _fetch_text(probe_url, headers, timeout)
             probe = {
                 "source": "uid_html_probe",
                 "url": probe_url,
@@ -185,7 +171,6 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                 "httpCode": fetch_result.http_code,
                 "finalUrl": fetch_result.final_url,
                 "reason": fetch_result.reason,
-                "timeoutSec": request_timeout,
             }
 
             uid_from_html = extract_uid_from_html(fetch_result.text)
@@ -217,8 +202,6 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                 )
 
             probes.append(probe)
-        if request_count >= max_requests or _remaining_timeout(deadline_at, timeout) <= 0:
-            break
 
     cookie_result = _resolve_uid_with_cookie_fallback(normalized)
     if cookie_result.uid:
@@ -369,10 +352,10 @@ def build_facebook_probe_urls(url_raw: Any) -> list[str]:
     path = parsed.path or "/"
     query = f"?{parsed.query}" if parsed.query else ""
     candidates = [
-        f"https://mbasic.facebook.com{path}{query}",
-        f"https://m.facebook.com{path}{query}",
-        f"https://www.facebook.com{path}{query}",
         normalized,
+        f"https://www.facebook.com{path}{query}",
+        f"https://m.facebook.com{path}{query}",
+        f"https://mbasic.facebook.com{path}{query}",
     ]
 
     out: list[str] = []
@@ -623,42 +606,6 @@ def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchRe
             final_url=url,
             reason=f"request_error:{type(exc).__name__}",
         )
-
-
-def _uid_public_probe_timeout() -> float:
-    configured = max(0.5, get_config().request_timeout_seconds)
-    return min(configured, _env_float("UID_PUBLIC_PROBE_TIMEOUT_SEC", DEFAULT_UID_PUBLIC_PROBE_TIMEOUT_SEC))
-
-
-def _uid_public_probe_deadline() -> float:
-    return _env_float("UID_PUBLIC_PROBE_DEADLINE_SEC", DEFAULT_UID_PUBLIC_PROBE_DEADLINE_SEC)
-
-
-def _uid_public_probe_max_requests() -> int:
-    return _env_int("UID_PUBLIC_PROBE_MAX_REQUESTS", DEFAULT_UID_PUBLIC_PROBE_MAX_REQUESTS)
-
-
-def _remaining_timeout(deadline_at: float, preferred_timeout: float) -> float:
-    remaining = deadline_at - time.monotonic()
-    if remaining <= 0:
-        return 0.0
-    return max(0.1, min(preferred_timeout, remaining))
-
-
-def _env_float(key: str, default: float) -> float:
-    try:
-        value = float(os.getenv(key, "").strip() or default)
-    except ValueError:
-        value = default
-    return max(0.1, value)
-
-
-def _env_int(key: str, default: int) -> int:
-    try:
-        value = int(os.getenv(key, "").strip() or default)
-    except ValueError:
-        value = default
-    return max(1, value)
 
 
 def _load_user_agents_from_file() -> list[str]:
