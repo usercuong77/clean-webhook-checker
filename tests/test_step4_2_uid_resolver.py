@@ -14,6 +14,7 @@ from app_modules.resolvers.facebook_uid_resolver import (
     build_uid_probe_header_candidates,
     resolve_uid_from_any_input,
 )
+from app_modules.resolvers.facebook_uid_cookie_resolver import CookieUidResolution
 from app_modules.checkers.check_modes import ModeConfig
 from app_modules.checkers.probe_result import ProbeResult
 
@@ -127,6 +128,35 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(second_username.uid, "100000000000099")
         self.assertEqual(second_username.source, "uid_html_probe")
 
+    @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_public_resolver_rejects_username_candidate_when_slug_verify_hits_login(self, fetch_text, cookie_fallback):
+        cookie_fallback.return_value = CookieUidResolution("", "uid_cookie_resolver", "no_usable_cookie_accounts", [])
+
+        def fake_fetch(url, headers, timeout):
+            if "profile.php?id=61560438496711" in url:
+                return FetchResult(
+                    200,
+                    "<title>Log in to Facebook</title>",
+                    "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D61560438496711",
+                    "ok",
+                )
+            return FetchResult(
+                200,
+                'profile.php?id=61560438496711',
+                "https://www.facebook.com/love.over.219161",
+                "ok",
+            )
+
+        fetch_text.side_effect = fake_fetch
+
+        result = resolve_uid_from_any_input("https://www.facebook.com/love.over.219161")
+
+        self.assertEqual(result.uid, "")
+        self.assertTrue(
+            any(probe.get("reason") == "uid_candidate_rejected_by_slug_verification" for probe in result.probes)
+        )
+
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_controller_resolves_username_uid_before_mode_probe(self, fetch_text):
         calls = []
@@ -170,8 +200,72 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(payload["status"], "LIVE")
         self.assertEqual(calls, ["100000000000001"])
 
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_controller_does_not_mark_scraped_username_live_from_silhouette_only(self, fetch_text):
+        def fake_fetch(url, headers, timeout):
+            if "profile.php?id=61560438496711" in url:
+                return FetchResult(
+                    200,
+                    '<a href="https://www.facebook.com/love.over.219161">profile</a>',
+                    "https://www.facebook.com/love.over.219161",
+                    "ok",
+                )
+            return FetchResult(
+                200,
+                'profile.php?id=61560438496711',
+                "https://www.facebook.com/love.over.219161",
+                "ok",
+            )
+
+        def fake_probe(uid):
+            return ProbeResult(
+                status="LIVE",
+                confidence="strong",
+                source="mode1_graph_public",
+                reason="graph_profile_picture_dimensions",
+                http_code=200,
+                details={"height": 100, "width": 100, "isSilhouette": True},
+            )
+
+        fetch_text.side_effect = fake_fetch
+        mode_config = ModeConfig(
+            mode="1",
+            source="mode1_graph_public",
+            description="test mode 1",
+            implemented=True,
+            handler=fake_probe,
+        )
+
+        with patch.dict("app_modules.checkers.check_modes.MODE_CONFIGS", {"1": mode_config}):
+            payload = check_input(
+                CheckRequest(
+                    input="https://www.facebook.com/love.over.219161",
+                    mode="1",
+                    includeName=False,
+                )
+            )
+
+        self.assertEqual(payload["uid"], "61560438496711")
+        self.assertEqual(payload["status"], "DIE")
+        self.assertEqual(payload["confidence"], "weak")
+        self.assertEqual(payload["reason"], "graph_silhouette_untrusted_username_uid")
+
 
 def _uid_fetcher(url, headers, timeout):
+    if "profile.php?id=100000000000001" in url:
+        return FetchResult(
+            200,
+            '<a href="https://www.facebook.com/kieu.anh.511762">profile</a>',
+            "https://www.facebook.com/kieu.anh.511762",
+            "ok",
+        )
+    if "profile.php?id=100000000000099" in url:
+        return FetchResult(
+            200,
+            '<a href="https://www.facebook.com/kieu.anh.51176299">profile</a>',
+            "https://www.facebook.com/kieu.anh.51176299",
+            "ok",
+        )
     if "share/1Ay9R878jq" in url:
         return FetchResult(
             200,

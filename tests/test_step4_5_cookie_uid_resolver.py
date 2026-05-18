@@ -85,7 +85,7 @@ class Step45CookieUidResolverTests(unittest.TestCase):
 
     @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)
     @patch("app_modules.resolvers.facebook_uid_cookie_resolver._fetch_text_with_cookie")
-    def test_cookie_resolver_accepts_candidate_from_matching_slug_context(self, fetch_text):
+    def test_cookie_resolver_rejects_candidate_from_matching_slug_context_when_verify_hits_login(self, fetch_text):
         def fake_fetch(url, headers, timeout):
             if "profile.php?id=100000000000077" in url:
                 return CookieFetchResult(
@@ -105,8 +105,37 @@ class Step45CookieUidResolverTests(unittest.TestCase):
 
         result = resolve_uid_with_cookies("https://www.facebook.com/kieu.anh.511762")
 
-        self.assertEqual(result.uid, "100000000000077")
-        self.assertEqual(result.reason, "uid_found_in_cookie_html")
+        self.assertEqual(result.uid, "")
+        self.assertTrue(
+            any(probe.get("reason") == "uid_candidate_rejected_by_slug_verification" for probe in result.probes)
+        )
+
+    @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)
+    @patch("app_modules.resolvers.facebook_uid_cookie_resolver._fetch_text_with_cookie")
+    def test_cookie_resolver_rejects_final_url_uid_when_slug_verify_hits_login(self, fetch_text):
+        def fake_fetch(url, headers, timeout):
+            if "profile.php?id=100000000000077" in url:
+                return CookieFetchResult(
+                    200,
+                    "<title>Log in to Facebook</title>",
+                    "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D100000000000077",
+                    "ok",
+                )
+            return CookieFetchResult(
+                200,
+                "<html></html>",
+                "https://www.facebook.com/profile.php?id=100000000000077",
+                "ok",
+            )
+
+        fetch_text.side_effect = fake_fetch
+
+        result = resolve_uid_with_cookies("https://www.facebook.com/love.over.21916177")
+
+        self.assertEqual(result.uid, "")
+        self.assertTrue(
+            any(probe.get("reason") == "uid_final_url_rejected_by_slug_verification" for probe in result.probes)
+        )
 
     @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)
     @patch("app_modules.resolvers.facebook_uid_cookie_resolver._fetch_text_with_cookie")

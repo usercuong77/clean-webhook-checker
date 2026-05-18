@@ -179,6 +179,16 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
 
             uid_from_html = extract_uid_from_html(fetch_result.text)
             if uid_from_html:
+                if username and not _verify_uid_matches_requested_slug(
+                    uid_from_html,
+                    normalized,
+                    headers,
+                    timeout,
+                ):
+                    probe["candidateUid"] = uid_from_html
+                    probe["reason"] = "uid_candidate_rejected_by_slug_verification"
+                    probes.append(probe)
+                    continue
                 probe["foundUid"] = uid_from_html
                 probe["reason"] = "uid_found_in_html"
                 probes.append(probe)
@@ -193,6 +203,16 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
 
             uid_from_final_url = extract_uid_from_url(fetch_result.final_url)
             if uid_from_final_url:
+                if username and not _verify_uid_matches_requested_slug(
+                    uid_from_final_url,
+                    normalized,
+                    headers,
+                    timeout,
+                ):
+                    probe["candidateUid"] = uid_from_final_url
+                    probe["reason"] = "uid_final_url_rejected_by_slug_verification"
+                    probes.append(probe)
+                    continue
                 probe["foundUid"] = uid_from_final_url
                 probe["reason"] = "uid_found_in_final_url"
                 probes.append(probe)
@@ -291,6 +311,33 @@ def extract_uid_candidates_from_html(html_raw: Any) -> list[str]:
             seen.add(uid)
             candidates.append(uid)
     return candidates
+
+
+def _verify_uid_matches_requested_slug(
+    uid: str,
+    raw: Any,
+    headers: Mapping[str, str],
+    timeout: float,
+) -> bool:
+    slug = extract_username_from_url(raw).strip().lower()
+    if not slug:
+        return True
+
+    fetch_result = _fetch_text(
+        f"https://www.facebook.com/profile.php?id={uid}",
+        headers,
+        timeout,
+    )
+    final_url = str(fetch_result.final_url or "").lower()
+    body = str(fetch_result.text or "").lower()
+
+    if "/login" in final_url or "checkpoint" in final_url:
+        return False
+    if extract_username_from_url(fetch_result.final_url).lower() == slug:
+        return True
+    if f"/{slug}" in final_url:
+        return True
+    return slug in body
 
 
 def normalize_facebook_payload_text(raw: Any) -> str:

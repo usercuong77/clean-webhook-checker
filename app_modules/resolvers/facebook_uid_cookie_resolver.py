@@ -85,7 +85,6 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
                 if uid_from_html:
                     if (
                         _needs_slug_verification(raw)
-                        and not _fetch_context_matches_requested_slug(raw, fetch_result)
                         and not _verify_uid_matches_requested_slug(
                             uid_from_html,
                             raw,
@@ -109,6 +108,16 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
 
                 uid_from_final_url = extract_uid_from_url(fetch_result.final_url)
                 if uid_from_final_url:
+                    if _needs_slug_verification(raw) and not _verify_uid_matches_requested_slug(
+                        uid_from_final_url,
+                        raw,
+                        headers,
+                        timeout,
+                    ):
+                        probe["candidateUid"] = uid_from_final_url
+                        probe["reason"] = "uid_final_url_rejected_by_slug_verification"
+                        probes.append(probe)
+                        continue
                     probe["foundUid"] = uid_from_final_url
                     probe["reason"] = "uid_found_in_cookie_final_url"
                     probes.append(probe)
@@ -204,19 +213,6 @@ def _fetch_text_with_cookie(
 
 def _needs_slug_verification(raw: Any) -> bool:
     return bool(extract_username_from_url(raw))
-
-
-def _fetch_context_matches_requested_slug(raw: Any, fetch_result: CookieFetchResult) -> bool:
-    slug = extract_username_from_url(raw).strip().lower()
-    if not slug:
-        return True
-
-    final_url = str(fetch_result.final_url or "").lower()
-    if "/login" in final_url or "checkpoint" in final_url:
-        return False
-    if extract_username_from_url(fetch_result.final_url).lower() == slug:
-        return True
-    return f"/{slug}" in final_url
 
 
 def _verify_uid_matches_requested_slug(
