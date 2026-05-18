@@ -106,6 +106,30 @@ class Step42UidResolverTests(unittest.TestCase):
 
     @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_username_cookie_preflight_runs_before_public_probe(self, fetch_text, cookie_fallback):
+        cookie_fallback.return_value = type(
+            "CookieResult",
+            (),
+            {
+                "uid": "100000000000321",
+                "source": "uid_cookie_probe",
+                "reason": "uid_found_in_cookie_html",
+                "probes": [{"source": "uid_cookie_probe", "reason": "uid_found_in_cookie_html"}],
+            },
+        )()
+
+        result = resolve_uid_from_any_input("https://www.facebook.com/vo.duy.0910")
+
+        self.assertEqual(result.uid, "100000000000321")
+        self.assertEqual(result.source, "uid_cookie_probe")
+        self.assertEqual(result.reason, "uid_found_in_cookie_preflight:uid_found_in_cookie_html")
+        self.assertEqual(fetch_text.call_count, 0)
+        self.assertEqual(cookie_fallback.call_count, 1)
+        self.assertEqual(cookie_fallback.call_args.kwargs["max_accounts"], 1)
+        self.assertEqual(cookie_fallback.call_args.kwargs["max_requests"], 3)
+
+    @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_successful_username_resolution_is_cached(self, fetch_text, cookie_fallback):
         cookie_fallback.return_value = type(
             "CookieResult",
@@ -174,7 +198,7 @@ class Step42UidResolverTests(unittest.TestCase):
             headers = build_uid_probe_header_candidates()
 
         self.assertGreaterEqual(len(headers), 1)
-        self.assertIn("Android 13", headers[0]["User-Agent"])
+        self.assertIn("Windows NT 10.0", headers[0]["User-Agent"])
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_four_required_link_shapes_resolve_before_checking(self, fetch_text):

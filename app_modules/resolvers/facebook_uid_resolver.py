@@ -86,6 +86,10 @@ DEFAULT_UID_PUBLIC_PROBE_TIMEOUT_SEC = 2.5
 DEFAULT_UID_PUBLIC_PROBE_DEADLINE_SEC = 7.0
 DEFAULT_UID_PUBLIC_PROBE_MAX_REQUESTS = 6
 DEFAULT_UID_RESOLUTION_CACHE_TTL_SEC = 6 * 60 * 60
+DEFAULT_UID_COOKIE_PREFLIGHT_TIMEOUT_SEC = 2.5
+DEFAULT_UID_COOKIE_PREFLIGHT_DEADLINE_SEC = 3.5
+DEFAULT_UID_COOKIE_PREFLIGHT_MAX_ACCOUNTS = 1
+DEFAULT_UID_COOKIE_PREFLIGHT_MAX_REQUESTS = 3
 KNOWN_UID_MAP_ENV_KEYS = (
     "UID_RESOLVER_KNOWN_MAP_JSON",
     "UID_RESOLVER_KNOWN_UID_MAP_JSON",
@@ -177,6 +181,26 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
         )
 
     probes: list[dict[str, Any]] = []
+    if username and _uid_cookie_preflight_enabled():
+        cookie_preflight = _resolve_uid_with_cookie_fallback(
+            normalized,
+            timeout_sec=_uid_cookie_preflight_timeout(),
+            deadline_sec=_uid_cookie_preflight_deadline(),
+            max_accounts=_uid_cookie_preflight_max_accounts(),
+            max_requests=_uid_cookie_preflight_max_requests(),
+        )
+        probes.extend(cookie_preflight.probes)
+        if cookie_preflight.uid:
+            _remember_uid_resolution(value, normalized, username, cookie_preflight.uid)
+            return _uid_result(
+                value,
+                cookie_preflight.uid,
+                username,
+                cookie_preflight.source,
+                f"uid_found_in_cookie_preflight:{cookie_preflight.reason}",
+                probes,
+            )
+
     timeout = _uid_public_probe_timeout()
     deadline_at = time.monotonic() + _uid_public_probe_deadline()
     max_requests = _uid_public_probe_max_requests()
@@ -746,10 +770,37 @@ def _header_label(headers: Mapping[str, str]) -> str:
     return user_agent[:80]
 
 
-def _resolve_uid_with_cookie_fallback(normalized: str):
+def _uid_cookie_preflight_enabled() -> bool:
+    return _env_bool("UID_COOKIE_PREFLIGHT_ENABLED", True)
+
+
+def _uid_cookie_preflight_timeout() -> float:
+    return _env_float("UID_COOKIE_PREFLIGHT_TIMEOUT_SEC", DEFAULT_UID_COOKIE_PREFLIGHT_TIMEOUT_SEC)
+
+
+def _uid_cookie_preflight_deadline() -> float:
+    return _env_float("UID_COOKIE_PREFLIGHT_DEADLINE_SEC", DEFAULT_UID_COOKIE_PREFLIGHT_DEADLINE_SEC)
+
+
+def _uid_cookie_preflight_max_accounts() -> int:
+    return _env_int("UID_COOKIE_PREFLIGHT_MAX_ACCOUNTS", DEFAULT_UID_COOKIE_PREFLIGHT_MAX_ACCOUNTS)
+
+
+def _uid_cookie_preflight_max_requests() -> int:
+    return _env_int("UID_COOKIE_PREFLIGHT_MAX_REQUESTS", DEFAULT_UID_COOKIE_PREFLIGHT_MAX_REQUESTS)
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    value = os.getenv(key, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
+def _resolve_uid_with_cookie_fallback(normalized: str, **kwargs):
     from app_modules.resolvers.facebook_uid_cookie_resolver import resolve_uid_with_cookies
 
-    return resolve_uid_with_cookies(normalized)
+    return resolve_uid_with_cookies(normalized, **kwargs)
 
 
 def _final_uid_not_found_reason(cookie_reason: str) -> str:
