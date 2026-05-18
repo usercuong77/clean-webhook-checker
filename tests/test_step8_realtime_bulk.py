@@ -37,12 +37,43 @@ class Step8RealtimeBulkTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["type"], "uid")
         self.assertEqual(payload["results"][0]["status"], "LIVE")
 
+    @patch("app_modules.api.controller.latest_post_input")
+    def test_bulk_post_jobs_keep_id_and_type(self, latest_post_input):
+        latest_post_input.return_value = {
+            "ok": True,
+            "uid": "100000000000001",
+            "postId": "123456789012345",
+            "link": "https://www.facebook.com/100000000000001/posts/123456789012345",
+            "content": "Latest post",
+            "reason": "ok",
+            "httpCode": 200,
+            "elapsedMs": 1,
+        }
+
+        payload = realtime_check_bulk(
+            RealtimeBulkRequest(
+                jobs=[
+                    {
+                        "id": "P1",
+                        "type": "post",
+                        "input": "100000000000001",
+                    }
+                ]
+            )
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["jobCount"], 1)
+        self.assertEqual(payload["results"][0]["id"], "P1")
+        self.assertEqual(payload["results"][0]["type"], "post")
+        self.assertEqual(payload["results"][0]["postId"], "123456789012345")
+
     def test_bulk_rejects_empty_and_unsupported_jobs(self):
         payload = realtime_check_bulk(
             RealtimeBulkRequest(
                 jobs=[
                     {"id": "empty", "type": "uid", "input": ""},
-                    {"id": "post", "type": "post", "input": "100000000000001"},
+                    {"id": "bad", "type": "viplike", "input": "100000000000001"},
                 ]
             )
         )

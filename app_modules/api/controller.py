@@ -34,6 +34,7 @@ class RealtimeBulkJob(BaseModel):
     type: str = Field(default="uid")
     input: str = Field(default="")
     uid: str = Field(default="")
+    url: str = Field(default="")
     mode: str = Field(default="all")
     includeName: bool = Field(default=False)
 
@@ -145,7 +146,7 @@ def realtime_check_bulk(req: RealtimeBulkRequest) -> dict[str, Any]:
     for index, job in enumerate(req.jobs or []):
         job_id = (job.id or f"job_{index + 1}").strip()
         job_type = (job.type or "uid").strip().lower()
-        if job_type != "uid":
+        if job_type not in {"uid", "post"}:
             results.append(
                 {
                     "id": job_id,
@@ -158,12 +159,12 @@ def realtime_check_bulk(req: RealtimeBulkRequest) -> dict[str, Any]:
             )
             continue
 
-        raw_input = (job.input or job.uid or "").strip()
+        raw_input = (job.input or job.uid or job.url or "").strip()
         if not raw_input:
             results.append(
                 {
                     "id": job_id,
-                    "type": "uid",
+                    "type": job_type,
                     "ok": False,
                     "reason": "empty_input",
                     "status": "UNKNOWN",
@@ -173,21 +174,32 @@ def realtime_check_bulk(req: RealtimeBulkRequest) -> dict[str, Any]:
             continue
 
         try:
-            item = check_input(
-                CheckRequest(
-                    input=raw_input,
-                    mode=job.mode or "all",
-                    includeName=bool(job.includeName),
+            if job_type == "post":
+                item = latest_post_input(
+                    LatestPostRequest(
+                        input=raw_input,
+                        uid=job.uid,
+                        url=job.url,
+                    )
                 )
-            )
-            item["id"] = job_id
-            item["type"] = "uid"
+                item["id"] = job_id
+                item["type"] = "post"
+            else:
+                item = check_input(
+                    CheckRequest(
+                        input=raw_input,
+                        mode=job.mode or "all",
+                        includeName=bool(job.includeName),
+                    )
+                )
+                item["id"] = job_id
+                item["type"] = "uid"
             results.append(item)
         except Exception as exc:
             results.append(
                 {
                     "id": job_id,
-                    "type": "uid",
+                    "type": job_type,
                     "ok": False,
                     "reason": f"job_error:{type(exc).__name__}",
                     "status": "UNKNOWN",
