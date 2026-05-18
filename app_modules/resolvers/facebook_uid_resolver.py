@@ -17,6 +17,7 @@ from app_modules.core.config import get_config
 FACEBOOK_HOST_RE = re.compile(r"(^|\.)(facebook\.com|fb\.com)$", re.IGNORECASE)
 NUMERIC_UID_RE = re.compile(r"^\d{8,20}$")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9.]{5,80}$")
+DEFAULT_UID_PROBE_UA_FILE = Path(__file__).resolve().parents[2] / "config" / "uid_probe_user_agents.txt"
 
 RESERVED_FIRST_PATHS = {
     "",
@@ -608,20 +609,27 @@ def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchRe
 
 
 def _load_user_agents_from_file() -> list[str]:
+    paths: list[Path] = []
     path_value = os.getenv("UID_PROBE_UA_FILE", "").strip()
-    if not path_value:
-        return []
-    try:
-        path = Path(path_value)
-        if not path.is_file():
-            return []
-        return [
-            line.strip()
-            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
-    except OSError:
-        return []
+    if path_value:
+        paths.append(Path(path_value))
+    paths.append(DEFAULT_UID_PROBE_UA_FILE)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        try:
+            if not path.is_file():
+                continue
+            for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                item = line.strip()
+                if not item or item.startswith("#") or item in seen:
+                    continue
+                seen.add(item)
+                out.append(item)
+        except OSError:
+            continue
+    return out
 
 
 def _header_label(headers: Mapping[str, str]) -> str:

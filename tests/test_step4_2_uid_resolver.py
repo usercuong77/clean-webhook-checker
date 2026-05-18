@@ -11,6 +11,7 @@ from app_modules.resolvers.facebook_uid_resolver import (
     extract_username_from_url,
     extract_uid_from_html,
     extract_uid_from_url,
+    build_uid_probe_header_candidates,
     resolve_uid_from_any_input,
 )
 from app_modules.checkers.check_modes import ModeConfig
@@ -90,6 +91,13 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(result.uid, "100004192098772")
         self.assertEqual(result.source, "uid_known_map")
         self.assertEqual(fetch_text.call_count, 0)
+
+    def test_default_user_agent_file_is_loaded_before_fallbacks(self):
+        with patch.dict(os.environ, {}, clear=True):
+            headers = build_uid_probe_header_candidates()
+
+        self.assertGreaterEqual(len(headers), 1)
+        self.assertIn("Android 13", headers[0]["User-Agent"])
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_four_required_link_shapes_resolve_before_checking(self, fetch_text):

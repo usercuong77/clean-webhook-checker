@@ -72,6 +72,7 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
         "httpCode": live_die.http_code,
         "elapsedMs": elapsed_ms,
         "probes": live_die.probes,
+        "resolverDebug": _resolver_debug_summary(resolved),
     }
 
 
@@ -88,6 +89,53 @@ def latest_post_input(req: LatestPostRequest) -> dict[str, Any]:
     result["username"] = resolved.username
     result["canonicalUrl"] = resolved.canonical_url
     return result
+
+
+def _resolver_debug_summary(resolved) -> dict[str, Any]:
+    probes = list(getattr(resolved, "resolver_probes", []) or [])
+    reasons: dict[str, int] = {}
+    headers: list[str] = []
+    sources: list[str] = []
+    successful_probe: dict[str, Any] | None = None
+
+    for probe in probes:
+        if not isinstance(probe, dict):
+            continue
+        reason = str(probe.get("reason", "") or "")
+        if reason:
+            reasons[reason] = reasons.get(reason, 0) + 1
+        source = str(probe.get("source", "") or "")
+        if source and source not in sources:
+            sources.append(source)
+        header = str(probe.get("header") or probe.get("userAgent") or "").strip()
+        if header and header not in headers:
+            headers.append(header[:100])
+        if successful_probe is None and (probe.get("foundUid") or reason.startswith("uid_found_")):
+            successful_probe = {
+                "source": source,
+                "reason": reason,
+                "uid": str(probe.get("foundUid", "") or ""),
+                "url": str(probe.get("url", "") or ""),
+                "header": header[:100],
+                "httpCode": int(probe.get("httpCode") or 0),
+            }
+
+    last_probe = probes[-1] if probes and isinstance(probes[-1], dict) else {}
+    return {
+        "source": getattr(resolved, "source", ""),
+        "reason": getattr(resolved, "reason", ""),
+        "uid": getattr(resolved, "uid", ""),
+        "username": getattr(resolved, "username", ""),
+        "canonicalUrl": getattr(resolved, "canonical_url", ""),
+        "needsNetworkResolve": bool(getattr(resolved, "needs_network_resolve", False)),
+        "probeCount": len(probes),
+        "sources": sources[:8],
+        "headers": headers[:8],
+        "reasonCounts": reasons,
+        "lastReason": str(last_probe.get("reason", "") or ""),
+        "lastHttpCode": int(last_probe.get("httpCode") or 0) if last_probe else 0,
+        "successfulProbe": successful_probe or {},
+    }
 
 
 def realtime_check_bulk(req: RealtimeBulkRequest) -> dict[str, Any]:

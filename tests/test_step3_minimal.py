@@ -26,6 +26,8 @@ class Step3MinimalTests(unittest.TestCase):
         self.assertIn("reason", payload)
         self.assertIsInstance(payload["elapsedMs"], int)
         self.assertIsInstance(payload["probes"], list)
+        self.assertIn("resolverDebug", payload)
+        self.assertEqual(payload["resolverDebug"]["uid"], "100012345678901")
 
     def test_profile_php_resolver(self):
         resolved = resolve_input("https://facebook.com/profile.php?id=100012345678901")
@@ -43,6 +45,8 @@ class Step3MinimalTests(unittest.TestCase):
         self.assertEqual(payload["name"], "")
         self.assertEqual(payload["source"], "uid_resolver")
         self.assertEqual(payload["reason"], "uid_not_found_after_public_probe_no_cookie_accounts")
+        self.assertGreater(payload["resolverDebug"]["probeCount"], 0)
+        self.assertIn("uid_html_probe", payload["resolverDebug"]["sources"])
 
     def test_invalid_link_is_die_when_uid_not_found(self):
         payload = check_input(CheckRequest(input="https://example.com/not-facebook", mode="all", includeName=True))
