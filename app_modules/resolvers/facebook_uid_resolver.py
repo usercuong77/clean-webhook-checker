@@ -88,6 +88,10 @@ KNOWN_UID_MAP_ENV_KEYS = (
 
 BUILTIN_CONFIRMED_UID_MAP = {
     "hong.duyen.tran.594446": "100004192098772",
+    "ng.trinh.498077": "100080441816993",
+    "vo.duy.0910": "100010211341364",
+    "caubeoooo": "100041007767995",
+    "tankiet.pham.1276": "100042281496124",
 }
 
 

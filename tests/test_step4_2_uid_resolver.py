@@ -92,6 +92,14 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(result.source, "uid_known_map")
         self.assertEqual(fetch_text.call_count, 0)
 
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_builtin_confirmed_uid_map_resolves_tankiet_before_network(self, fetch_text):
+        result = resolve_uid_from_any_input("https://www.facebook.com/tankiet.pham.1276/")
+
+        self.assertEqual(result.uid, "100042281496124")
+        self.assertEqual(result.source, "uid_known_map")
+        self.assertEqual(fetch_text.call_count, 0)
+
     def test_default_user_agent_file_is_loaded_before_fallbacks(self):
         with patch.dict(os.environ, {}, clear=True):
             headers = build_uid_probe_header_candidates()

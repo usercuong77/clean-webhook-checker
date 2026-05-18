@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html as html_lib
+import json
 import os
 import re
 from collections import OrderedDict
@@ -69,6 +70,12 @@ ATTR_RE = re.compile(
 )
 
 MAX_NAME_CACHE_ITEMS = 1000
+BUILTIN_CONFIRMED_PROFILE_NAME_MAP = {
+    "100080441816993": "Ng Trinh",
+    "100010211341364": "Vo Khac Duy",
+    "100041007767995": "caubeoooo",
+    "100042281496124": "PHAM TAN KIET",
+}
 _NAME_CACHE: OrderedDict[str, str] = OrderedDict()
 
 
@@ -109,6 +116,11 @@ def choose_profile_name(
 def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
     uid = str(resolved.uid or "").strip()
     if uid:
+        known_name = _known_profile_name(uid)
+        if known_name:
+            _cache_put(uid, known_name)
+            return ProfileNameResult(known_name, "profile_name_known_map", "name_found_known_map")
+
         cached = _cache_get(uid)
         if cached:
             return ProfileNameResult(cached, "uid_name_cache", "cache_hit")
@@ -163,6 +175,28 @@ def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
                 return ProfileNameResult(name, "profile_name_cookie", "name_found_cookie", probes)
 
     return ProfileNameResult("", "profile_name", "name_not_found", probes)
+
+
+def _known_profile_name(uid: str) -> str:
+    uid_key = str(uid or "").strip()
+    if not uid_key:
+        return ""
+
+    known = dict(BUILTIN_CONFIRMED_PROFILE_NAME_MAP)
+    raw_value = os.getenv("PROFILE_NAME_KNOWN_MAP_JSON", "").strip()
+    if raw_value:
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            for raw_key, raw_item in parsed.items():
+                key = str(raw_key or "").strip()
+                name = str(raw_item.get("name") if isinstance(raw_item, dict) else raw_item or "").strip()
+                if key and is_valid_profile_name(name):
+                    known[key] = name
+
+    return known.get(uid_key, "")
 
 
 def build_profile_name_urls(resolved: ResolvedInput) -> list[str]:
