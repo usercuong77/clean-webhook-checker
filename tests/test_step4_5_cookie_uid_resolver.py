@@ -22,7 +22,7 @@ class Step45CookieUidResolverTests(unittest.TestCase):
     def setUp(self):
         self._tds_patcher = patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
         self._tds_api = self._tds_patcher.start()
-        self._tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_no_success")
+        self._tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_unavailable_after_deadline")
         self.addCleanup(self._tds_patcher.stop)
 
     @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)

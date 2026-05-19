@@ -39,7 +39,7 @@ class Step3MinimalTests(unittest.TestCase):
     @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_username_without_uid_is_die(self, fetch_text, tds_api):
-        tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_no_success")
+        tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_unavailable_after_deadline")
         fetch_text.return_value = FetchResult(200, "<html></html>", "https://facebook.com/lvmedits", "ok")
 
         payload = check_input(CheckRequest(input="https://facebook.com/lvmedits", mode="1", includeName=True))
@@ -68,7 +68,7 @@ class Step3MinimalTests(unittest.TestCase):
     @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_share_link_without_uid_is_die(self, fetch_text, tds_api):
-        tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_no_success")
+        tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_unavailable_after_deadline")
         fetch_text.return_value = FetchResult(
             200,
             "<html></html>",

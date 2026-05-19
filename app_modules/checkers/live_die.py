@@ -32,8 +32,9 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
         )
 
     if not resolved.uid and not resolved.username:
+        status = "UNKNOWN" if _uid_failure_is_unknown(resolved.reason) else "DIE"
         return LiveDieResult(
-            status="DIE",
+            status=status,
             confidence="weak",
             source=resolved.source,
             reason=resolved.reason or "input_not_resolved",
@@ -41,7 +42,7 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
             probes=[
                 {
                     "source": resolved.source,
-                    "status": "DIE",
+                    "status": status,
                     "reason": resolved.reason or "input_not_resolved",
                     "requestedMode": normalized_mode,
                 }
@@ -61,8 +62,9 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
     }
 
     if not resolved.uid:
+        status = "UNKNOWN" if _uid_failure_is_unknown(resolved.reason) else "DIE"
         return LiveDieResult(
-            status="DIE",
+            status=status,
             confidence="weak",
             source=resolved.source,
             reason=resolved.reason or "uid_not_resolved",
@@ -74,6 +76,13 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
     executed_mode = "1" if requested_mode == "all" else requested_mode
     reason = probe.reason if requested_mode != "all" else f"all_currently_mode1_only:{probe.reason}"
     return _from_probe_result(probe, reason, [resolver_probe], executed_mode, requested_mode)
+
+
+def _uid_failure_is_unknown(reason: str) -> bool:
+    return str(reason or "") in {
+        "tds_rate_limited",
+        "tds_api_unavailable_after_deadline",
+    }
 
 
 def _from_probe_result(

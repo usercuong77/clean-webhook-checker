@@ -199,6 +199,17 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
             [tds_probe],
         )
 
+    if not _tds_allows_public_fallback(tds_result.reason):
+        return UidResolution(
+            input=value,
+            uid="",
+            username=username,
+            canonical_url=_canonical_from_normalized(normalized),
+            source=tds_result.source,
+            reason=tds_result.reason,
+            probes=[tds_probe],
+        )
+
     probes: list[dict[str, Any]] = []
     if tds_result.reason not in {"empty_input"}:
         probes.append(tds_probe)
@@ -877,3 +888,7 @@ def _final_uid_not_found_reason(cookie_reason: str) -> str:
     if cookie_reason:
         return "uid_not_found_after_public_and_cookie_probe"
     return "uid_not_found_after_probe"
+
+
+def _tds_allows_public_fallback(reason: str) -> bool:
+    return str(reason or "") == "tds_api_unavailable_after_deadline"
