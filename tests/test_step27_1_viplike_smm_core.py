@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from app_modules.core.config import get_config
 from app_modules.features.viplike import (
+    CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES,
     SmmApiResult,
     build_viplike_order_dedupe_key,
     build_viplike_order_payload,
@@ -73,6 +74,48 @@ class Step271VipLikeSmmCoreTests(unittest.TestCase):
         self.assertEqual(item["endpoint"], "/api/facebook-like-gia-re/buy")
         self.assertTrue(item["supportsReactionChoice"])
         self.assertIn("love", item["allowedReactionTypes"])
+
+    def test_live_api_package_payload_is_limited_to_nine_facebook_like_packages(self):
+        os.environ["SMM_API_KEY"] = "test-key"
+        get_config.cache_clear()
+        package_rows = [
+            {"id": "twitter", "name": "X - Twitter Likes", "package_name": "twitter_likes", "min": "10", "max": "1000", "price_per": "614.79"},
+            {"id": "shopee", "name": "Shopee like", "package_name": "shopee_like", "min": "5", "max": "1000", "price_per": "55"},
+            {"id": "cheap", "name": "Tim gia re", "package_name": "like_fast_low_quality", "min": "100", "max": "100000", "price_per": "67.85"},
+        ]
+        for index, package_name in enumerate(CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES, start=1):
+            package_rows.append(
+                {
+                    "id": str(index),
+                    "name": f"Facebook package {index}",
+                    "package_name": package_name,
+                    "min": "50",
+                    "max": "100000",
+                    "price_per": str(index),
+                }
+            )
+
+        api_payload = {
+            "data": [
+                {
+                    "name": "Mixed like services",
+                    "path": "/api/facebook-like-gia-re/buy",
+                    "url_api": "/api/facebook-like-gia-re/buy",
+                    "package": package_rows,
+                }
+            ]
+        }
+        api_result = SmmApiResult(True, 200, "https://example.test/api/prices", api_payload, "{}", "", 3)
+
+        with patch("app_modules.features.viplike.call_smm_api", return_value=api_result):
+            payload = get_viplike_packages(refresh=True)
+
+        self.assertEqual(payload["source"], "api")
+        self.assertEqual(payload["count"], 9)
+        self.assertEqual(
+            [item["packageName"] for item in payload["packages"]],
+            list(CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES),
+        )
 
     def test_order_dry_run_builds_payload_without_network(self):
         with patch("app_modules.features.viplike.call_smm_api") as call_smm_api:

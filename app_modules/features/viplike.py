@@ -15,6 +15,21 @@ from app_modules.core.config import get_config
 DEFAULT_SMM_API_BASE_URL = "https://api.baostar.pro/api/v2"
 DEFAULT_FACEBOOK_LIKE_ENDPOINT = "/api/facebook-like-gia-re/buy"
 VALID_REACTIONS = ("like", "love", "care", "haha", "wow", "sad", "angry")
+CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES = (
+    "facebook_like",
+    "facebook_like_v3",
+    "facebook_like_v7",
+    "facebook_like_v8",
+    "facebook_like_v10",
+    "facebook_like_v33",
+    "facebook_like_v34",
+    "facebook_like_v401",
+    "facebook_like_v402",
+)
+CANONICAL_FACEBOOK_LIKE_PACKAGE_SET = set(CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES)
+CANONICAL_FACEBOOK_LIKE_PACKAGE_ORDER = {
+    name: index for index, name in enumerate(CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES)
+}
 REACTION_PACKAGE_KEYS = {
     "facebook like v401",
     "facebook like v3",
@@ -346,11 +361,16 @@ def normalize_viplike_package_rows(rows: list[dict[str, Any]]) -> list[dict[str,
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for index, row in enumerate(rows, start=1):
+        package_name = normalize_viplike_package_name(row.get("packageName"))
+        if package_name not in CANONICAL_FACEBOOK_LIKE_PACKAGE_SET:
+            continue
+        if clean_text(row.get("targetHint")) != "fb":
+            continue
         normalized = normalize_viplike_package_option(
             {
                 "id": row.get("packageId") or f"api_fb_like_{index}",
                 "label": row.get("packageTitle") or row.get("packageName"),
-                "packageName": row.get("packageName"),
+                "packageName": package_name,
                 "endpoint": row.get("urlApi") or row.get("path") or DEFAULT_FACEBOOK_LIKE_ENDPOINT,
                 "min": row.get("min"),
                 "max": row.get("max"),
@@ -373,7 +393,12 @@ def normalize_viplike_package_rows(rows: list[dict[str, Any]]) -> list[dict[str,
         seen.add(key)
         out.append(enrich_viplike_package_option(normalized))
 
-    out.sort(key=lambda item: (-int(bool(item.get("supportsReactionChoice"))), int(item.get("minQty") or 0), clean_text(item.get("label"))))
+    out.sort(
+        key=lambda item: (
+            CANONICAL_FACEBOOK_LIKE_PACKAGE_ORDER.get(normalize_viplike_package_name(item.get("packageName")), 999),
+            clean_text(item.get("label")),
+        )
+    )
     return out
 
 
