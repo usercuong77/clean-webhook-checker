@@ -109,7 +109,7 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
 
 
 def _profile_name_lookup_enabled() -> bool:
-    value = os.getenv("PROFILE_NAME_LOOKUP_ENABLED", "1").strip().lower()
+    value = os.getenv("PROFILE_NAME_LOOKUP_ENABLED", "0").strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 
