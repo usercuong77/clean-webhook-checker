@@ -17,8 +17,9 @@ from app_modules.resolvers.tds_uid_resolver import resolve_uid_with_tds_api
 
 
 FACEBOOK_HOST_RE = re.compile(r"(^|\.)(facebook\.com|fb\.com)$", re.IGNORECASE)
-NUMERIC_UID_RE = re.compile(r"^\d{5,20}$")
-USERNAME_RE = re.compile(r"^[A-Za-z0-9.]{5,80}$")
+NUMERIC_UID_RE = re.compile(r"^\d{1,20}$")
+GENERIC_NUMERIC_UID_RE = re.compile(r"^\d{5,20}$")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9.]{3,80}$")
 DEFAULT_UID_PROBE_UA_FILE = Path(__file__).resolve().parents[2] / "config" / "uid_probe_user_agents.txt"
 
 RESERVED_FIRST_PATHS = {
@@ -68,11 +69,11 @@ UID_SCRAPE_PATTERNS = [
 ]
 
 UID_META_SCRAPE_PATTERNS = [
-    r'<meta[^>]+property=["\']al:ios:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
-    r'<meta[^>]+property=["\']al:android:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
-    r'<meta[^>]+property=["\']al:web:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
-    r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']https?://(?:www\.)?facebook\.com/profile\.php\?id=(\d{5,20})',
-    r"fb://profile/(\d{5,20})",
+    r'<meta[^>]+property=["\']al:ios:url["\'][^>]+content=["\']fb://profile/(\d{1,20})',
+    r'<meta[^>]+property=["\']al:android:url["\'][^>]+content=["\']fb://profile/(\d{1,20})',
+    r'<meta[^>]+property=["\']al:web:url["\'][^>]+content=["\']fb://profile/(\d{1,20})',
+    r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']https?://(?:www\.)?facebook\.com/profile\.php\?id=(\d{1,20})',
+    r"fb://profile/(\d{1,20})",
 ]
 
 FALLBACK_UID_PROBE_USER_AGENTS = [
@@ -393,7 +394,7 @@ def extract_uid_candidates_from_html(html_raw: Any) -> list[str]:
     for pattern in UID_SCRAPE_PATTERNS:
         for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
             uid = str(match.group(1) if match.groups() else "").strip()
-            if not NUMERIC_UID_RE.fullmatch(uid) or uid in seen:
+            if not GENERIC_NUMERIC_UID_RE.fullmatch(uid) or uid in seen:
                 continue
             seen.add(uid)
             candidates.append(uid)
@@ -427,10 +428,10 @@ def extract_uid_for_username_from_html(html_raw: Any, username: Any) -> str:
 
     escaped_slug = re.escape(slug)
     direct_patterns = (
-        rf'"userVanity"\s*:\s*"{escaped_slug}".{{0,1600}}?"userID"\s*:\s*"(\d{{5,20}})"',
-        rf'"userID"\s*:\s*"(\d{{5,20}})".{{0,1600}}?"userVanity"\s*:\s*"{escaped_slug}"',
-        rf'"vanity"\s*:\s*"{escaped_slug}".{{0,800}}?"id"\s*:\s*"(\d{{5,20}})"',
-        rf'"id"\s*:\s*"(\d{{5,20}})".{{0,800}}?"vanity"\s*:\s*"{escaped_slug}"',
+        rf'"userVanity"\s*:\s*"{escaped_slug}".{{0,1600}}?"userID"\s*:\s*"(\d{{1,20}})"',
+        rf'"userID"\s*:\s*"(\d{{1,20}})".{{0,1600}}?"userVanity"\s*:\s*"{escaped_slug}"',
+        rf'"vanity"\s*:\s*"{escaped_slug}".{{0,800}}?"id"\s*:\s*"(\d{{1,20}})"',
+        rf'"id"\s*:\s*"(\d{{1,20}})".{{0,800}}?"vanity"\s*:\s*"{escaped_slug}"',
     )
     for pattern in direct_patterns:
         match = re.search(pattern, normalized, flags=re.IGNORECASE | re.DOTALL)
@@ -444,9 +445,9 @@ def extract_uid_for_username_from_html(html_raw: Any, username: Any) -> str:
         end = min(len(normalized), slug_match.end() + 2200)
         window = normalized[start:end]
         for pattern in (
-            r'"profile_owner"\s*:\s*\{\s*"id"\s*:\s*"(\d{5,20})"',
-            r'"profile_owner"\s*:\s*"(\d{5,20})"',
-            r'"userID"\s*:\s*"(\d{5,20})"',
+            r'"profile_owner"\s*:\s*\{\s*"id"\s*:\s*"(\d{1,20})"',
+            r'"profile_owner"\s*:\s*"(\d{1,20})"',
+            r'"userID"\s*:\s*"(\d{1,20})"',
         ):
             match = re.search(pattern, window, flags=re.IGNORECASE | re.DOTALL)
             if match:

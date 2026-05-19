@@ -68,6 +68,9 @@ class Step42UidResolverTests(unittest.TestCase):
     def test_share_path_is_not_a_username(self):
         self.assertEqual(extract_username_from_url("https://www.facebook.com/share/1Ay9R878jq/"), "")
 
+    def test_short_grandfathered_username_is_supported(self):
+        self.assertEqual(extract_username_from_url("https://www.facebook.com/zuck"), "zuck")
+
     def test_extract_uid_from_html_patterns(self):
         samples = [
             '<meta property="al:ios:url" content="fb://profile/9209278">',
@@ -113,6 +116,11 @@ class Step42UidResolverTests(unittest.TestCase):
 
         self.assertEqual(extract_uid_from_meta_html(html), "9209278")
 
+    def test_extract_uid_from_meta_html_accepts_very_short_trusted_uid(self):
+        html = '<meta property="al:android:url" content="fb://profile/4">'
+
+        self.assertEqual(extract_uid_from_meta_html(html), "4")
+
     def test_extract_uid_for_username_uses_vanity_bound_user_id(self):
         html = (
             '"viewerID":"100084259813312",'
@@ -143,6 +151,14 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(
             extract_uid_for_username_from_html(html, "zMinhHuyDev"),
             "9209278",
+        )
+
+    def test_extract_uid_for_username_accepts_very_short_trusted_uid(self):
+        html = '"userVanity":"zuck","userID":"4"'
+
+        self.assertEqual(
+            extract_uid_for_username_from_html(html, "zuck"),
+            "4",
         )
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
@@ -236,6 +252,22 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(result.uid, "100000000000088")
         self.assertEqual(result.source, "uid_html_probe")
         self.assertEqual(result.reason, "uid_found_in_meta_html")
+
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_public_resolver_resolves_zuck_short_username_and_uid(self, fetch_text):
+        fetch_text.return_value = FetchResult(
+            200,
+            '"userVanity":"zuck","userID":"4"',
+            "https://www.facebook.com/zuck",
+            "ok",
+        )
+
+        result = resolve_uid_from_any_input("https://www.facebook.com/zuck")
+
+        self.assertEqual(result.uid, "4")
+        self.assertEqual(result.username, "zuck")
+        self.assertEqual(result.source, "uid_html_probe")
+        self.assertEqual(result.reason, "uid_found_for_username_in_html")
 
     def test_default_user_agent_file_is_loaded_before_fallbacks(self):
         with patch.dict(os.environ, {}, clear=True):
