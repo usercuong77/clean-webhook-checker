@@ -14,6 +14,7 @@ from app_modules.resolvers.facebook_uid_resolver import (
     build_facebook_probe_urls,
     extract_username_from_url,
     extract_uid_candidates_from_html,
+    extract_uid_for_username_from_html,
     extract_uid_from_html,
     extract_uid_from_url,
 )
@@ -99,6 +100,19 @@ def resolve_uid_with_cookies(raw: Any) -> CookieUidResolution:
                     "cookieIndex": account.index,
                     "userAgent": _header_label(headers),
                 }
+
+                username = extract_username_from_url(raw)
+                uid_for_username = extract_uid_for_username_from_html(fetch_result.text, username)
+                if uid_for_username and uid_for_username != account.c_user:
+                    probe["foundUid"] = uid_for_username
+                    probe["reason"] = "uid_found_for_username_in_cookie_html"
+                    probes.append(probe)
+                    return CookieUidResolution(
+                        uid_for_username,
+                        "uid_cookie_probe",
+                        "uid_found_for_username_in_cookie_html",
+                        probes,
+                    )
 
                 uid_from_html = _extract_uid_from_cookie_html(fetch_result.text, account)
                 if uid_from_html:

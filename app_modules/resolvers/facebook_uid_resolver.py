@@ -98,6 +98,7 @@ BUILTIN_CONFIRMED_UID_MAP = {
     "tankiet.pham.1276": "100042281496124",
     "love.over.219161": "61560438496711",
     "bien.trang.750": "100004507923562",
+    "thanhcuongmedia": "100002614628083",
 }
 
 
@@ -193,6 +194,20 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                 "finalUrl": fetch_result.final_url,
                 "reason": fetch_result.reason,
             }
+
+            uid_for_username = extract_uid_for_username_from_html(fetch_result.text, username)
+            if uid_for_username:
+                probe["foundUid"] = uid_for_username
+                probe["reason"] = "uid_found_for_username_in_html"
+                probes.append(probe)
+                return _uid_result(
+                    value,
+                    uid_for_username,
+                    username,
+                    "uid_html_probe",
+                    "uid_found_for_username_in_html",
+                    probes,
+                )
 
             uid_from_html = extract_uid_from_html(fetch_result.text)
             if uid_from_html:
@@ -328,6 +343,43 @@ def extract_uid_candidates_from_html(html_raw: Any) -> list[str]:
             seen.add(uid)
             candidates.append(uid)
     return candidates
+
+
+def extract_uid_for_username_from_html(html_raw: Any, username: Any) -> str:
+    normalized = normalize_facebook_payload_text(html_raw)
+    slug = str(username or "").strip().lower().strip("/")
+    if not normalized or not USERNAME_RE.fullmatch(slug):
+        return ""
+
+    escaped_slug = re.escape(slug)
+    direct_patterns = (
+        rf'"userVanity"\s*:\s*"{escaped_slug}".{{0,1600}}?"userID"\s*:\s*"(\d{{8,20}})"',
+        rf'"userID"\s*:\s*"(\d{{8,20}})".{{0,1600}}?"userVanity"\s*:\s*"{escaped_slug}"',
+        rf'"vanity"\s*:\s*"{escaped_slug}".{{0,800}}?"id"\s*:\s*"(\d{{8,20}})"',
+        rf'"id"\s*:\s*"(\d{{8,20}})".{{0,800}}?"vanity"\s*:\s*"{escaped_slug}"',
+    )
+    for pattern in direct_patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            uid = str(match.group(1) or "").strip()
+            if NUMERIC_UID_RE.fullmatch(uid):
+                return uid
+
+    for slug_match in re.finditer(escaped_slug, normalized, flags=re.IGNORECASE):
+        start = max(0, slug_match.start() - 1200)
+        end = min(len(normalized), slug_match.end() + 2200)
+        window = normalized[start:end]
+        for pattern in (
+            r'"profile_owner"\s*:\s*\{\s*"id"\s*:\s*"(\d{8,20})"',
+            r'"profile_owner"\s*:\s*"(\d{8,20})"',
+            r'"userID"\s*:\s*"(\d{8,20})"',
+        ):
+            match = re.search(pattern, window, flags=re.IGNORECASE | re.DOTALL)
+            if match:
+                uid = str(match.group(1) or "").strip()
+                if NUMERIC_UID_RE.fullmatch(uid):
+                    return uid
+    return ""
 
 
 def _verify_uid_matches_requested_slug(

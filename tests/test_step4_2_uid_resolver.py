@@ -8,6 +8,7 @@ from app_modules.resolvers.facebook_uid_resolver import (
     FetchResult,
     build_facebook_probe_urls,
     extract_uid_candidates_from_html,
+    extract_uid_for_username_from_html,
     extract_username_from_url,
     extract_uid_from_html,
     extract_uid_from_url,
@@ -74,6 +75,30 @@ class Step42UidResolverTests(unittest.TestCase):
 
         self.assertEqual(extract_uid_from_html(html), "100000000000088")
 
+    def test_extract_uid_for_username_uses_vanity_bound_user_id(self):
+        html = (
+            '"viewerID":"100084259813312",'
+            '"userVanity":"thanhcuongmedia",'
+            '"userID":"100002614628083",'
+            '"profile_owner":{"id":"100002614628083","name":"Thanh Cuong"}'
+        )
+
+        self.assertEqual(
+            extract_uid_for_username_from_html(html, "thanhcuongmedia"),
+            "100002614628083",
+        )
+
+    def test_extract_uid_for_username_ignores_unrelated_profile_links(self):
+        html = (
+            'profile.php?id=100000638877549 '
+            '"userVanity":"thanhcuongmedia","userID":"100002614628083"'
+        )
+
+        self.assertEqual(
+            extract_uid_for_username_from_html(html, "thanhcuongmedia"),
+            "100002614628083",
+        )
+
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     def test_known_uid_map_resolves_username_before_network(self, fetch_text):
         env = {"UID_RESOLVER_KNOWN_MAP_JSON": json.dumps({"kieu.anh.511762": "100013996607571"})}
@@ -114,6 +139,14 @@ class Step42UidResolverTests(unittest.TestCase):
         result = resolve_uid_from_any_input("https://www.facebook.com/bien.trang.750/")
 
         self.assertEqual(result.uid, "100004507923562")
+        self.assertEqual(result.source, "uid_known_map")
+        self.assertEqual(fetch_text.call_count, 0)
+
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_builtin_confirmed_uid_map_resolves_thanhcuongmedia_before_network(self, fetch_text):
+        result = resolve_uid_from_any_input("https://www.facebook.com/thanhcuongmedia")
+
+        self.assertEqual(result.uid, "100002614628083")
         self.assertEqual(result.source, "uid_known_map")
         self.assertEqual(fetch_text.call_count, 0)
 

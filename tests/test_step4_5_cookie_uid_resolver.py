@@ -38,6 +38,26 @@ class Step45CookieUidResolverTests(unittest.TestCase):
 
     @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)
     @patch("app_modules.resolvers.facebook_uid_cookie_resolver._fetch_text_with_cookie")
+    def test_cookie_resolver_prefers_username_bound_uid(self, fetch_text):
+        fetch_text.return_value = CookieFetchResult(
+            200,
+            (
+                'profile.php?id=100000638877549 '
+                '"userVanity":"thanhcuongmedia",'
+                '"userID":"100002614628083"'
+            ),
+            "https://www.facebook.com/thanhcuongmedia",
+            "ok",
+        )
+
+        result = resolve_uid_with_cookies("https://www.facebook.com/thanhcuongmedia")
+
+        self.assertEqual(result.uid, "100002614628083")
+        self.assertEqual(result.source, "uid_cookie_probe")
+        self.assertEqual(result.reason, "uid_found_for_username_in_cookie_html")
+
+    @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)
+    @patch("app_modules.resolvers.facebook_uid_cookie_resolver._fetch_text_with_cookie")
     def test_cookie_resolver_skips_logged_in_account_uid(self, fetch_text):
         def fake_fetch(url, headers, timeout):
             if "profile.php?id=100000000000077" in url:
