@@ -1,4 +1,5 @@
 from time import perf_counter
+import os
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -83,7 +84,11 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
     raw_input = (req.input or "").strip()
     resolved = resolve_input(raw_input)
     live_die = check_live_die(resolved, mode=req.mode)
-    name = choose_profile_name(resolved, live_die, include_name=req.includeName)
+    name = choose_profile_name(
+        resolved,
+        live_die,
+        include_name=bool(req.includeName) and _profile_name_lookup_enabled(),
+    )
     elapsed_ms = int((perf_counter() - started) * 1000)
 
     return {
@@ -101,6 +106,11 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
         "probes": live_die.probes,
         "resolverDebug": _resolver_debug_summary(resolved),
     }
+
+
+def _profile_name_lookup_enabled() -> bool:
+    value = os.getenv("PROFILE_NAME_LOOKUP_ENABLED", "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def latest_post_input(req: LatestPostRequest) -> dict[str, Any]:
