@@ -231,7 +231,7 @@ def extract_profile_username_from_url(url_raw: Any) -> str:
         "pages",
     }:
         return ""
-    if re.fullmatch(r"\d{8,20}", first_segment):
+    if re.fullmatch(r"\d{5,20}", first_segment):
         return ""
     if not re.fullmatch(r"[A-Za-z0-9.]{3,80}", first_segment):
         return ""

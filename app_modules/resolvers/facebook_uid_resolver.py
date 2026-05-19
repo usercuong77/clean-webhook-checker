@@ -16,7 +16,7 @@ from app_modules.core.config import get_config
 
 
 FACEBOOK_HOST_RE = re.compile(r"(^|\.)(facebook\.com|fb\.com)$", re.IGNORECASE)
-NUMERIC_UID_RE = re.compile(r"^\d{8,20}$")
+NUMERIC_UID_RE = re.compile(r"^\d{5,20}$")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9.]{5,80}$")
 DEFAULT_UID_PROBE_UA_FILE = Path(__file__).resolve().parents[2] / "config" / "uid_probe_user_agents.txt"
 
@@ -46,24 +46,32 @@ RESERVED_FIRST_PATHS = {
 }
 
 UID_SCRAPE_PATTERNS = [
-    r'<meta[^>]+property=["\']al:ios:url["\'][^>]+content=["\']fb://profile/(\d{8,20})',
-    r'<meta[^>]+property=["\']al:android:url["\'][^>]+content=["\']fb://profile/(\d{8,20})',
-    r'<meta[^>]+property=["\']al:web:url["\'][^>]+content=["\']fb://profile/(\d{8,20})',
-    r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']https?://(?:www\.)?facebook\.com/profile\.php\?id=(\d{8,20})',
-    r'"profile_owner"\s*:\s*"(\d{8,20})"',
-    r'"profile_owner_id"\s*:\s*"(\d{8,20})"',
-    r'"owner"\s*:\s*\{\s*"id"\s*:\s*"(\d{8,20})"',
-    r'"ownerID"\s*:\s*"(\d{8,20})"',
-    r'"profileID"\s*:\s*"(\d{8,20})"',
-    r'"user_id"\s*:\s*"(\d{8,20})"',
-    r'"userID"\s*:\s*"(\d{8,20})"',
-    r'"profile_id"\s*:\s*(\d{8,20})',
-    r'"profile_id"\s*:\s*"(\d{8,20})"',
-    r'"entity_id"\s*:\s*"(\d{8,20})"',
-    r'"actorID"\s*:\s*"(\d{8,20})"',
-    r'"subject_id"\s*:\s*"(\d{8,20})"',
-    r"profile\.php\?id=(\d{8,20})",
-    r"fb://profile/(\d{8,20})",
+    r'<meta[^>]+property=["\']al:ios:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
+    r'<meta[^>]+property=["\']al:android:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
+    r'<meta[^>]+property=["\']al:web:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
+    r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']https?://(?:www\.)?facebook\.com/profile\.php\?id=(\d{5,20})',
+    r'"profile_owner"\s*:\s*"(\d{5,20})"',
+    r'"profile_owner_id"\s*:\s*"(\d{5,20})"',
+    r'"owner"\s*:\s*\{\s*"id"\s*:\s*"(\d{5,20})"',
+    r'"ownerID"\s*:\s*"(\d{5,20})"',
+    r'"profileID"\s*:\s*"(\d{5,20})"',
+    r'"user_id"\s*:\s*"(\d{5,20})"',
+    r'"userID"\s*:\s*"(\d{5,20})"',
+    r'"profile_id"\s*:\s*(\d{5,20})',
+    r'"profile_id"\s*:\s*"(\d{5,20})"',
+    r'"entity_id"\s*:\s*"(\d{5,20})"',
+    r'"actorID"\s*:\s*"(\d{5,20})"',
+    r'"subject_id"\s*:\s*"(\d{5,20})"',
+    r"profile\.php\?id=(\d{5,20})",
+    r"fb://profile/(\d{5,20})",
+]
+
+UID_META_SCRAPE_PATTERNS = [
+    r'<meta[^>]+property=["\']al:ios:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
+    r'<meta[^>]+property=["\']al:android:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
+    r'<meta[^>]+property=["\']al:web:url["\'][^>]+content=["\']fb://profile/(\d{5,20})',
+    r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']https?://(?:www\.)?facebook\.com/profile\.php\?id=(\d{5,20})',
+    r"fb://profile/(\d{5,20})",
 ]
 
 FALLBACK_UID_PROBE_USER_AGENTS = [
@@ -99,6 +107,7 @@ BUILTIN_CONFIRMED_UID_MAP = {
     "love.over.219161": "61560438496711",
     "bien.trang.750": "100004507923562",
     "thanhcuongmedia": "100002614628083",
+    "zminhhuydev": "9209278",
 }
 
 
@@ -195,6 +204,30 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                 "reason": fetch_result.reason,
             }
 
+            uid_from_final_url = extract_uid_from_url(fetch_result.final_url)
+            if uid_from_final_url:
+                if username and not _verify_uid_matches_requested_slug(
+                    uid_from_final_url,
+                    normalized,
+                    headers,
+                    _remaining_timeout(deadline_at, timeout),
+                ):
+                    probe["candidateUid"] = uid_from_final_url
+                    probe["reason"] = "uid_final_url_rejected_by_slug_verification"
+                    probes.append(probe)
+                    continue
+                probe["foundUid"] = uid_from_final_url
+                probe["reason"] = "uid_found_in_final_url"
+                probes.append(probe)
+                return _uid_result(
+                    value,
+                    uid_from_final_url,
+                    username,
+                    "uid_final_url",
+                    "uid_found_in_final_url",
+                    probes,
+                )
+
             uid_for_username = extract_uid_for_username_from_html(fetch_result.text, username)
             if uid_for_username:
                 probe["foundUid"] = uid_for_username
@@ -206,6 +239,30 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                     username,
                     "uid_html_probe",
                     "uid_found_for_username_in_html",
+                    probes,
+                )
+
+            uid_from_meta = extract_uid_from_meta_html(fetch_result.text)
+            if uid_from_meta:
+                if username and not _verify_uid_matches_requested_slug(
+                    uid_from_meta,
+                    normalized,
+                    headers,
+                    _remaining_timeout(deadline_at, timeout),
+                ):
+                    probe["candidateUid"] = uid_from_meta
+                    probe["reason"] = "uid_meta_rejected_by_slug_verification"
+                    probes.append(probe)
+                    continue
+                probe["foundUid"] = uid_from_meta
+                probe["reason"] = "uid_found_in_meta_html"
+                probes.append(probe)
+                return _uid_result(
+                    value,
+                    uid_from_meta,
+                    username,
+                    "uid_html_probe",
+                    "uid_found_in_meta_html",
                     probes,
                 )
 
@@ -230,30 +287,6 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
                     username,
                     "uid_html_probe",
                     "uid_found_in_html",
-                    probes,
-                )
-
-            uid_from_final_url = extract_uid_from_url(fetch_result.final_url)
-            if uid_from_final_url:
-                if username and not _verify_uid_matches_requested_slug(
-                    uid_from_final_url,
-                    normalized,
-                    headers,
-                    _remaining_timeout(deadline_at, timeout),
-                ):
-                    probe["candidateUid"] = uid_from_final_url
-                    probe["reason"] = "uid_final_url_rejected_by_slug_verification"
-                    probes.append(probe)
-                    continue
-                probe["foundUid"] = uid_from_final_url
-                probe["reason"] = "uid_found_in_final_url"
-                probes.append(probe)
-                return _uid_result(
-                    value,
-                    uid_from_final_url,
-                    username,
-                    "uid_final_url",
-                    "uid_found_in_final_url",
                     probes,
                 )
 
@@ -345,6 +378,25 @@ def extract_uid_candidates_from_html(html_raw: Any) -> list[str]:
     return candidates
 
 
+def extract_uid_from_meta_html(html_raw: Any) -> str:
+    normalized = normalize_facebook_payload_text(html_raw)
+    if not normalized:
+        return ""
+
+    scan_text = normalized[:120000]
+    if not any(marker in scan_text for marker in ("fb://profile/", "og:url", "al:ios:url", "al:android:url", "al:web:url")):
+        return ""
+
+    for pattern in UID_META_SCRAPE_PATTERNS:
+        match = re.search(pattern, scan_text, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            continue
+        uid = str(match.group(1) or "").strip()
+        if NUMERIC_UID_RE.fullmatch(uid):
+            return uid
+    return ""
+
+
 def extract_uid_for_username_from_html(html_raw: Any, username: Any) -> str:
     normalized = normalize_facebook_payload_text(html_raw)
     slug = str(username or "").strip().lower().strip("/")
@@ -353,10 +405,10 @@ def extract_uid_for_username_from_html(html_raw: Any, username: Any) -> str:
 
     escaped_slug = re.escape(slug)
     direct_patterns = (
-        rf'"userVanity"\s*:\s*"{escaped_slug}".{{0,1600}}?"userID"\s*:\s*"(\d{{8,20}})"',
-        rf'"userID"\s*:\s*"(\d{{8,20}})".{{0,1600}}?"userVanity"\s*:\s*"{escaped_slug}"',
-        rf'"vanity"\s*:\s*"{escaped_slug}".{{0,800}}?"id"\s*:\s*"(\d{{8,20}})"',
-        rf'"id"\s*:\s*"(\d{{8,20}})".{{0,800}}?"vanity"\s*:\s*"{escaped_slug}"',
+        rf'"userVanity"\s*:\s*"{escaped_slug}".{{0,1600}}?"userID"\s*:\s*"(\d{{5,20}})"',
+        rf'"userID"\s*:\s*"(\d{{5,20}})".{{0,1600}}?"userVanity"\s*:\s*"{escaped_slug}"',
+        rf'"vanity"\s*:\s*"{escaped_slug}".{{0,800}}?"id"\s*:\s*"(\d{{5,20}})"',
+        rf'"id"\s*:\s*"(\d{{5,20}})".{{0,800}}?"vanity"\s*:\s*"{escaped_slug}"',
     )
     for pattern in direct_patterns:
         match = re.search(pattern, normalized, flags=re.IGNORECASE | re.DOTALL)
@@ -370,9 +422,9 @@ def extract_uid_for_username_from_html(html_raw: Any, username: Any) -> str:
         end = min(len(normalized), slug_match.end() + 2200)
         window = normalized[start:end]
         for pattern in (
-            r'"profile_owner"\s*:\s*\{\s*"id"\s*:\s*"(\d{8,20})"',
-            r'"profile_owner"\s*:\s*"(\d{8,20})"',
-            r'"userID"\s*:\s*"(\d{8,20})"',
+            r'"profile_owner"\s*:\s*\{\s*"id"\s*:\s*"(\d{5,20})"',
+            r'"profile_owner"\s*:\s*"(\d{5,20})"',
+            r'"userID"\s*:\s*"(\d{5,20})"',
         ):
             match = re.search(pattern, window, flags=re.IGNORECASE | re.DOTALL)
             if match:
@@ -503,10 +555,10 @@ def build_facebook_probe_urls(url_raw: Any) -> list[str]:
     path = parsed.path or "/"
     query = f"?{parsed.query}" if parsed.query else ""
     candidates = [
-        normalized,
-        f"https://www.facebook.com{path}{query}",
-        f"https://m.facebook.com{path}{query}",
         f"https://mbasic.facebook.com{path}{query}",
+        f"https://m.facebook.com{path}{query}",
+        f"https://www.facebook.com{path}{query}",
+        normalized,
     ]
 
     out: list[str] = []
