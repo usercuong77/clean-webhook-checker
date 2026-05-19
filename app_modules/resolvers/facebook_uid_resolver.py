@@ -97,6 +97,7 @@ BUILTIN_CONFIRMED_UID_MAP = {
     "caubeoooo": "100041007767995",
     "tankiet.pham.1276": "100042281496124",
     "love.over.219161": "61560438496711",
+    "bien.trang.750": "100004507923562",
 }
 
 
