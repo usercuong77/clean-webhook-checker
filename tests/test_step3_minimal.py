@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from app_modules.api.controller import CheckRequest, check_input, health_payload
 from app_modules.resolvers.facebook_uid_resolver import FetchResult
+from app_modules.resolvers.tds_uid_resolver import TdsUidResolution
 from app_modules.resolvers.uid_resolver import resolve_input
 
 
@@ -34,9 +35,11 @@ class Step3MinimalTests(unittest.TestCase):
         self.assertEqual(resolved.uid, "100012345678901")
         self.assertEqual(resolved.source, "profile_php")
 
-    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     @patch("app_modules.resolvers.facebook_cookies.DEFAULT_LOCAL_COOKIE_FILE", Path("Z:/missing/facebook_cookies.txt"))
-    def test_username_without_uid_is_die(self, fetch_text):
+    @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_username_without_uid_is_die(self, fetch_text, tds_api):
+        tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_no_success")
         fetch_text.return_value = FetchResult(200, "<html></html>", "https://facebook.com/lvmedits", "ok")
 
         payload = check_input(CheckRequest(input="https://facebook.com/lvmedits", mode="1", includeName=True))
@@ -61,9 +64,11 @@ class Step3MinimalTests(unittest.TestCase):
         self.assertEqual(resolved.source, "numeric_path")
         self.assertEqual(resolved.reason, "path_uid")
 
-    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     @patch("app_modules.resolvers.facebook_cookies.DEFAULT_LOCAL_COOKIE_FILE", Path("Z:/missing/facebook_cookies.txt"))
-    def test_share_link_without_uid_is_die(self, fetch_text):
+    @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    def test_share_link_without_uid_is_die(self, fetch_text, tds_api):
+        tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_no_success")
         fetch_text.return_value = FetchResult(
             200,
             "<html></html>",

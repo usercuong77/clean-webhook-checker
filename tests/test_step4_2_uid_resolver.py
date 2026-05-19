@@ -17,11 +17,18 @@ from app_modules.resolvers.facebook_uid_resolver import (
     resolve_uid_from_any_input,
 )
 from app_modules.resolvers.facebook_uid_cookie_resolver import CookieUidResolution
+from app_modules.resolvers.tds_uid_resolver import TdsUidResolution
 from app_modules.checkers.check_modes import ModeConfig
 from app_modules.checkers.probe_result import ProbeResult
 
 
 class Step42UidResolverTests(unittest.TestCase):
+    def setUp(self):
+        self._tds_patcher = patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
+        self._tds_api = self._tds_patcher.start()
+        self._tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_no_success")
+        self.addCleanup(self._tds_patcher.stop)
+
     def test_extract_uid_shortcuts_from_url(self):
         self.assertEqual(
             extract_uid_from_url("https://www.facebook.com/profile.php?id=100041775009544"),

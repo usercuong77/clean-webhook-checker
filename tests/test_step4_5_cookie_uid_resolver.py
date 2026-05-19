@@ -8,6 +8,7 @@ from app_modules.resolvers.facebook_uid_cookie_resolver import (
     resolve_uid_with_cookies,
 )
 from app_modules.resolvers.facebook_uid_resolver import FetchResult, resolve_uid_from_any_input
+from app_modules.resolvers.tds_uid_resolver import TdsUidResolution
 
 
 FAKE_ENV = {
@@ -18,6 +19,12 @@ FAKE_ENV = {
 
 
 class Step45CookieUidResolverTests(unittest.TestCase):
+    def setUp(self):
+        self._tds_patcher = patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
+        self._tds_api = self._tds_patcher.start()
+        self._tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_no_success")
+        self.addCleanup(self._tds_patcher.stop)
+
     @patch("app_modules.resolvers.facebook_cookies.os.environ", FAKE_ENV)
     @patch("app_modules.resolvers.facebook_uid_cookie_resolver._fetch_text_with_cookie")
     def test_cookie_resolver_extracts_uid_from_cookie_html(self, fetch_text):

@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import requests
 
 from app_modules.core.config import get_config
+from app_modules.resolvers.tds_uid_resolver import resolve_uid_with_tds_api
 
 
 FACEBOOK_HOST_RE = re.compile(r"(^|\.)(facebook\.com|fb\.com)$", re.IGNORECASE)
@@ -178,7 +179,28 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
             [],
         )
 
+    tds_result = resolve_uid_with_tds_api(normalized)
+    tds_probe = {
+        "source": tds_result.source,
+        "httpCode": tds_result.http_code,
+        "reason": tds_result.reason,
+    }
+    if tds_result.name:
+        tds_probe["name"] = tds_result.name
+    if tds_result.uid:
+        tds_probe["foundUid"] = tds_result.uid
+        return _uid_result(
+            value,
+            tds_result.uid,
+            username,
+            tds_result.source,
+            tds_result.reason,
+            [tds_probe],
+        )
+
     probes: list[dict[str, Any]] = []
+    if tds_result.reason not in {"empty_input"}:
+        probes.append(tds_probe)
     timeout = _uid_public_probe_timeout()
     deadline_at = time.monotonic() + _uid_public_probe_deadline()
     max_requests = _uid_public_probe_max_requests()
