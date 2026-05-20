@@ -169,6 +169,63 @@ class Step5ProfileNameTests(unittest.TestCase):
 
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_no_cookie_continues_after_name_only_until_verified(self, fetch_limited, load_accounts):
+        load_accounts.return_value = [_cookie_account()]
+        fetch_limited.side_effect = [
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="No Cookie Name">',
+                "https://www.facebook.com/no.cookie",
+                "ok",
+            ),
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="No Cookie Name Verified account">',
+                "https://www.facebook.com/no.cookie/about",
+                "ok",
+            ),
+        ]
+
+        result = check_tick_input(CheckRequest(input="https://www.facebook.com/no.cookie", mode="1", includeName=True))
+
+        self.assertEqual(result["name"], "No Cookie Name")
+        self.assertTrue(result["verified"])
+        self.assertFalse(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "no_cookie")
+        self.assertEqual(fetch_limited.call_count, 2)
+        self.assertEqual(load_accounts.call_count, 0)
+
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_force_cookie_continues_after_name_only_until_verified(self, fetch_limited, load_accounts):
+        load_accounts.return_value = [_cookie_account()]
+        fetch_limited.side_effect = [
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="Cookie Name">',
+                "https://www.facebook.com/cookie.only",
+                "ok",
+            ),
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="Cookie Name Verified account">',
+                "https://www.facebook.com/cookie.only/about",
+                "ok",
+            ),
+        ]
+
+        result = check_tick_input(
+            CheckRequest(input="https://www.facebook.com/cookie.only", mode="1", includeName=True, forceCookie=True)
+        )
+
+        self.assertEqual(result["name"], "Cookie Name")
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "cookie")
+        self.assertEqual(fetch_limited.call_count, 2)
+
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
     def test_checktick_force_cookie_skips_no_cookie(self, fetch_limited, load_accounts):
         load_accounts.return_value = [_cookie_account()]
         fetch_limited.return_value = _fetch_result(

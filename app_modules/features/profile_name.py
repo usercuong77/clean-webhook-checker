@@ -312,6 +312,7 @@ def _resolve_profile_tick_no_cookie(
     timeout: float,
     probes: list[dict[str, Any]],
 ) -> ProfileTickResult:
+    best_name_result: ProfileTickResult | None = None
     for url, headers, header_label in _public_tick_probe_candidates(normalized, uid, username):
         fetch = _fetch_limited_text(url, headers, timeout, TICK_PUBLIC_READ_CAP_BYTES)
         result = _profile_tick_result_from_fetch(
@@ -325,8 +326,13 @@ def _resolve_profile_tick_no_cookie(
             used_cookie=False,
             probes=probes,
         )
-        if result.name or result.verified_label:
+        if result.verified_label:
             return result
+        if result.name and best_name_result is None:
+            best_name_result = result
+
+    if best_name_result:
+        return best_name_result
 
     return ProfileTickResult(
         name="",
@@ -352,6 +358,7 @@ def _resolve_profile_tick_with_cookie(
     probes: list[dict[str, Any]],
     forced: bool,
 ) -> ProfileTickResult:
+    best_name_result: ProfileTickResult | None = None
     for account in load_cookie_accounts()[:_cookie_account_limit()]:
         if not account.is_usable:
             continue
@@ -369,8 +376,13 @@ def _resolve_profile_tick_with_cookie(
                 probes=probes,
                 cookie_account=account.masked_id,
             )
-            if result.name or result.verified_label:
+            if result.verified_label:
                 return result
+            if result.name and best_name_result is None:
+                best_name_result = result
+
+    if best_name_result:
+        return best_name_result
 
     return ProfileTickResult(
         name="",
