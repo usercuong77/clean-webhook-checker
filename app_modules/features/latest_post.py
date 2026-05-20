@@ -528,7 +528,35 @@ def fetch_deep_owner_post_from_timeline_html(
         failure["probeAttempts"] = [attempt]
         return failure
 
+    structured_post = extract_owner_post_from_timeline_graphql(
+        graphql_fetch.text,
+        owner_uid,
+        owner_name,
+        input_raw,
+    )
+    if structured_post.get("ok"):
+        attempt["reason"] = structured_post["reason"]
+        attempt["structuredTimeline"] = True
+        if candidate.has_cookie:
+            _remember_direct_checkpost_working_cookie(candidate)
+        structured_post.update(
+            {
+                "method": method,
+                "httpCode": graphql_fetch.http_code,
+                "probeUrl": request["url"],
+                "finalUrl": graphql_fetch.final_url,
+                "cookieSource": candidate.source,
+                "cookieFallbackUsed": candidate.has_cookie,
+                "probeAttempts": [attempt],
+                "deepTimelineUsed": True,
+            }
+        )
+        return structured_post
+
     post_ids = extract_ordered_post_ids_from_html(graphql_fetch.text)
+    attempt["structuredReason"] = structured_post.get("reason", "")
+    attempt["structuredEdgeCount"] = structured_post.get("edgeCount", 0)
+    attempt["structuredSkippedTaggedCount"] = structured_post.get("skippedTaggedCount", 0)
     for post_id in post_ids:
         ownership = analyze_latest_post_ownership(graphql_fetch.text, post_id, owner_uid)
         if ownership["isTaggedOrSharedByOther"]:
@@ -576,6 +604,181 @@ def fetch_deep_owner_post_from_timeline_html(
     failure["source"] = "direct_link_scrape"
     failure["directInput"] = sanitize_latest_post_input(input_raw)
     return failure
+
+
+def extract_owner_post_from_timeline_graphql(
+    response_text_raw: Any,
+    owner_uid_raw: Any,
+    owner_name: str,
+    input_raw: Any,
+) -> dict[str, Any]:
+    owner_uid = normalize_uid(owner_uid_raw)
+    if not owner_uid:
+        return {"ok": False, "reason": "owner_uid_required_for_structured_timeline"}
+
+    edge_count = 0
+    skipped_tagged_count = 0
+    for payload in iter_graphql_json_payloads(response_text_raw):
+        user = ((payload.get("data") or {}).get("user") or {}) if isinstance(payload, dict) else {}
+        timeline = user.get("timeline_list_feed_units") or {}
+        edges = timeline.get("edges") or []
+        if not isinstance(edges, list):
+            continue
+        edge_count += len(edges)
+        for edge in edges:
+            node = (edge or {}).get("node") if isinstance(edge, dict) else None
+            if not isinstance(node, dict):
+                continue
+            actor = first_actor_from_story_node(node)
+            actor_uid = normalize_uid(actor.get("id"))
+            if actor_uid != owner_uid:
+                continue
+            if has_attached_story_from_other_actor(node, owner_uid):
+                skipped_tagged_count += 1
+                continue
+
+            post_link = str(node.get("permalink_url") or "").strip()
+            post_id = extract_facebook_post_id_from_url(post_link) or str(node.get("post_id") or "").strip()
+            if not is_latest_post_id_token(post_id):
+                continue
+            content = extract_direct_story_message_from_node(node)
+            if not post_link:
+                post_link = build_latest_post_link(owner_uid, post_id)
+            return {
+                "ok": True,
+                "uid": owner_uid,
+                "username": extract_profile_username_from_url(input_raw),
+                "name": str(owner_name or actor.get("name") or ""),
+                "postId": post_id,
+                "timestamp": extract_first_creation_time_from_node(node),
+                "link": post_link,
+                "content": content,
+                "postContent": content,
+                "source": "direct_link_scrape",
+                "reason": "ok_owner_post_graphql_structured",
+                "directInput": sanitize_latest_post_input(input_raw),
+                "ownerUid": owner_uid,
+                "actorUid": actor_uid,
+                "actorName": str(actor.get("name") or ""),
+            }
+
+    return {
+        "ok": False,
+        "reason": "owner_post_not_found_in_structured_timeline",
+        "edgeCount": edge_count,
+        "skippedTaggedCount": skipped_tagged_count,
+    }
+
+
+def iter_graphql_json_payloads(response_text_raw: Any) -> list[dict[str, Any]]:
+    text = str(response_text_raw or "")
+    payloads: list[dict[str, Any]] = []
+    for line in text.splitlines() or [text]:
+        item = line.strip()
+        if not item:
+            continue
+        if item.startswith("for (;;);"):
+            item = item[len("for (;;);") :].strip()
+        try:
+            payload = json.loads(item)
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return payloads
+
+
+def first_actor_from_story_node(node: Mapping[str, Any]) -> dict[str, Any]:
+    actors = node.get("actors") if isinstance(node, dict) else None
+    if isinstance(actors, list) and actors:
+        actor = actors[0]
+        if isinstance(actor, dict):
+            return actor
+    return {}
+
+
+def has_attached_story_from_other_actor(node: Mapping[str, Any], owner_uid: str) -> bool:
+    attached = node.get("attached_story") if isinstance(node, dict) else None
+    if not isinstance(attached, dict):
+        return False
+    for actor in collect_story_actors(attached, limit=12):
+        actor_uid = normalize_uid(actor.get("id"))
+        if actor_uid and actor_uid != owner_uid:
+            return True
+    return False
+
+
+def collect_story_actors(value: Any, limit: int = 20) -> list[dict[str, Any]]:
+    actors_found: list[dict[str, Any]] = []
+
+    def walk(item: Any) -> None:
+        if len(actors_found) >= limit:
+            return
+        if isinstance(item, dict):
+            actors = item.get("actors")
+            if isinstance(actors, list):
+                for actor in actors:
+                    if isinstance(actor, dict):
+                        actors_found.append(actor)
+                        if len(actors_found) >= limit:
+                            return
+            for nested in item.values():
+                walk(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                walk(nested)
+
+    walk(value)
+    return actors_found
+
+
+def extract_direct_story_message_from_node(node: Mapping[str, Any]) -> str:
+    candidates: list[str] = []
+
+    def walk(item: Any, path: tuple[str, ...] = ()) -> None:
+        if isinstance(item, dict):
+            message = item.get("message")
+            if isinstance(message, dict):
+                text = message.get("text")
+                if isinstance(text, str) and text.strip():
+                    candidates.append(text)
+            for key, nested in item.items():
+                if key == "attached_story":
+                    continue
+                walk(nested, path + (str(key),))
+        elif isinstance(item, list):
+            for nested in item:
+                walk(nested, path)
+
+    walk(node)
+    for candidate in candidates:
+        cleaned = clean_facebook_post_content(candidate)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def extract_first_creation_time_from_node(node: Mapping[str, Any]) -> int:
+    def walk(item: Any) -> int:
+        if isinstance(item, dict):
+            for key in ("creation_time", "publish_time", "created_time"):
+                timestamp = normalize_unix_timestamp_seconds(item.get(key))
+                if timestamp:
+                    return timestamp
+            for nested_key, nested in item.items():
+                if nested_key == "attached_story":
+                    continue
+                timestamp = walk(nested)
+                if timestamp:
+                    return timestamp
+        elif isinstance(item, list):
+            for nested in item:
+                timestamp = walk(nested)
+                if timestamp:
+                    return timestamp
+        return 0
+
+    return walk(node)
 
 
 def build_timeline_graphql_request(html_raw: Any, referer_url: str, owner_uid: str) -> dict[str, Any] | None:
