@@ -91,6 +91,36 @@ class Step6LatestPostTests(unittest.TestCase):
 
         self.assertEqual(content, "Hello\nworld from latest post")
 
+    def test_extract_content_prefers_message_over_tagged_context(self):
+        post_id = "123456789012345"
+        html = (
+            f'"post_id":"{post_id}"'
+            '"text":"Nh\\u1ecf Th\\u01b0\\u01a1ng c\\u00f9ng v\\u1edbi Vu Tran."'
+            + ("x" * 10000)
+            + f'"post_id":"{post_id}"'
+            '"message":{"text":"N\\u0103m ngo\\u00e1i g\\u00f3p sh c\\u0169ng \\u0110\\u1ed3n tr\\u00fang s\\u1ed1\\nN\\u0103m nay g\\u00f3p \\u00f4t\\u00f4 c\\u0169ng \\u0111\\u1ed3n tr\\u00fang s\\u1ed1"}'
+        )
+
+        content = extract_latest_post_content_from_html(html, post_id)
+
+        self.assertIn("Nam nay".replace("Nam", "N\u0103m"), content)
+        self.assertNotIn("Vu Tran", content)
+
+    def test_extract_content_prefers_message_over_live_with_others_context(self):
+        post_id = "123456789012345"
+        html = (
+            f'"post_id":"{post_id}"'
+            '"text":"V\\u0129nh V\\u0103n \\u0111\\u00e3 ph\\u00e1t tr\\u1ef1c ti\\u1ebfp \\u2014 v\\u1edbi Khuyn Khuyn v\\u00e0 7 ng\\u01b0\\u1eddi kh\\u00e1c."'
+            + ("y" * 10000)
+            + f'"post_id":"{post_id}"'
+            '"message":{"text":"b\\u00e0 con c\\u1ea7n lh 0329556042 ship t\\u1eadn n\\u01a1i bao khoang d\\u1ef1ng cho b\\u00e0 con \\u1ea1"}'
+        )
+
+        content = extract_latest_post_content_from_html(html, post_id)
+
+        self.assertIn("0329556042", content)
+        self.assertNotIn("phat truc tiep", content.lower())
+
     def test_build_latest_post_link_supports_numeric_and_pfbid(self):
         self.assertEqual(
             build_latest_post_link("100000000000001", "123456789012345"),

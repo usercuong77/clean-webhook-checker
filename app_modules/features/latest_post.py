@@ -55,6 +55,15 @@ POST_CONTENT_PATTERNS = [
     r'"story"\s*:\s*"((?:\\.|[^"\\]){20,5000})"',
 ]
 
+POST_CONTENT_PATTERN_SCORES = {
+    0: 950,
+    1: 950,
+    2: 520,
+    3: 720,
+    4: 160,
+    5: 120,
+}
+
 GENERIC_POST_CONTENT_EXACT = {
     "facebook",
     "log in",
@@ -93,6 +102,15 @@ class CookieCandidate:
     @property
     def has_cookie(self) -> bool:
         return bool(self.cookies)
+
+
+@dataclass(frozen=True)
+class PostContentCandidate:
+    content: str
+    pattern_index: int
+    window_index: int
+    source: str = "json"
+    distance_to_post: int = 999999
 
 
 def get_latest_post(
@@ -554,49 +572,114 @@ def extract_latest_post_content_from_html(html_raw: Any, post_id_raw: Any = "") 
 
     normalized = normalize_facebook_payload_text(html)
     post_id = str(post_id_raw or "").strip()
-    windows: list[str] = []
+    windows: list[tuple[str, int]] = []
 
     if post_id:
         for match in re.finditer(re.escape(post_id), normalized, flags=re.IGNORECASE):
             start = max(0, match.start() - 4000)
             end = min(len(normalized), match.end() + 9000)
-            windows.append(normalized[start:end])
+            windows.append((normalized[start:end], match.start() - start))
             if len(windows) >= 4:
                 break
 
-    windows.append(normalized[:60000])
+    windows.append((normalized[:60000], -1))
 
-    for window in windows:
-        for candidate in extract_json_content_candidates_from_text(window):
-            if candidate:
-                return candidate
+    candidates: list[PostContentCandidate] = []
+    for window_index, (window, post_offset) in enumerate(windows):
+        candidates.extend(extract_json_content_candidate_items_from_text(window, window_index, post_offset))
 
-    for candidate in (
-        extract_meta_content_from_html(html, "property", "og:description"),
-        extract_meta_content_from_html(html, "name", "description"),
-        extract_meta_content_from_html(html, "property", "twitter:description"),
+    selected = choose_best_post_content_candidate(candidates)
+    if selected:
+        return selected
+
+    for meta_index, candidate in enumerate(
+        (
+            extract_meta_content_from_html(html, "property", "og:description"),
+            extract_meta_content_from_html(html, "name", "description"),
+            extract_meta_content_from_html(html, "property", "twitter:description"),
+        )
     ):
         cleaned = clean_facebook_post_content(candidate)
         if cleaned:
-            return cleaned
+            candidates.append(PostContentCandidate(cleaned, 90 + meta_index, len(windows), "meta"))
 
-    return ""
+    return choose_best_post_content_candidate(candidates)
 
 
 def extract_json_content_candidates_from_text(text_raw: Any) -> list[str]:
+    return [item.content for item in extract_json_content_candidate_items_from_text(text_raw, 0, -1)]
+
+
+def extract_json_content_candidate_items_from_text(
+    text_raw: Any,
+    window_index: int = 0,
+    post_offset: int = -1,
+) -> list[PostContentCandidate]:
     text = str(text_raw or "")
     if not text:
         return []
 
-    candidates: list[str] = []
-    for pattern in POST_CONTENT_PATTERNS:
+    candidates: list[PostContentCandidate] = []
+    for pattern_index, pattern in enumerate(POST_CONTENT_PATTERNS):
         for match in re.finditer(pattern, text, flags=re.IGNORECASE):
             cleaned = clean_facebook_post_content(decode_facebook_json_text(match.group(1)))
-            if cleaned and cleaned not in candidates:
-                candidates.append(cleaned)
+            if cleaned:
+                distance = abs(match.start() - post_offset) if post_offset >= 0 else 999999
+                candidates.append(PostContentCandidate(cleaned, pattern_index, window_index, distance_to_post=distance))
             if len(candidates) >= 12:
                 return candidates
     return candidates
+
+
+def choose_best_post_content_candidate(candidates: list[PostContentCandidate]) -> str:
+    if not candidates:
+        return ""
+    best = max(candidates, key=score_post_content_candidate)
+    if score_post_content_candidate(best) <= -1000:
+        return ""
+    return best.content
+
+
+def score_post_content_candidate(candidate: PostContentCandidate) -> int:
+    content = clean_facebook_post_content(candidate.content)
+    if not content:
+        return -2000
+
+    score = POST_CONTENT_PATTERN_SCORES.get(candidate.pattern_index, 80)
+    score += min(len(content), 600) // 4
+    if "\n" in content:
+        score += 90
+    if re.search(r"\d{8,}", content):
+        score += 25
+    if candidate.distance_to_post < 999999:
+        score -= min(candidate.distance_to_post // 30, 240)
+        if candidate.distance_to_post <= 1000:
+            score += 70
+    if candidate.source == "meta":
+        score -= 160
+    if is_facebook_social_context_content(content):
+        score -= 900
+    return score
+
+
+def is_facebook_social_context_content(content_raw: Any) -> bool:
+    content = clean_facebook_post_content(content_raw).lower()
+    if not content:
+        return False
+    patterns = [
+        r"\bcùng với\b",
+        r"\bvới\s+.{1,120}\s+và\s+\d+\s+người khác\b",
+        r"\bđã phát trực tiếp\b",
+        r"\bđang phát trực tiếp\b",
+        r"\bphát trực tiếp\s+—\s+với\b",
+        r"\bis with\b",
+        r"\bwas with\b",
+        r"\bwith\s+.{1,120}\s+and\s+\d+\s+others\b",
+        r"\bwas live\b",
+        r"\bis live\b",
+        r"\bwent live\b",
+    ]
+    return any(re.search(pattern, content, flags=re.IGNORECASE) for pattern in patterns)
 
 
 def is_trusted_no_cookie_latest_post(parsed_raw: Any, content_raw: Any) -> bool:
