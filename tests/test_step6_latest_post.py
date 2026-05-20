@@ -4,30 +4,49 @@ from unittest.mock import patch
 from app_modules.api.controller import LatestPostRequest, latest_post_input
 from app_modules.features.latest_post import (
     FetchResult,
+    build_cookie_candidates,
     build_facebook_latest_post_probe_urls,
     build_latest_post_link,
     clean_facebook_post_content,
     extract_latest_post_content_from_html,
     extract_profile_username_from_url,
+    is_trusted_no_cookie_latest_post,
     parse_latest_post_from_html,
 )
 from app_modules.resolvers.uid_resolver import ResolvedInput
 
 
 class Step6LatestPostTests(unittest.TestCase):
-    def test_probe_urls_prefer_light_no_cookie_urls(self):
+    def test_probe_urls_prefer_fast_public_desktop_urls(self):
         urls = build_facebook_latest_post_probe_urls("100000000000001", "test.user", with_cookie=False)
 
-        self.assertEqual(urls[0], "https://mbasic.facebook.com/profile.php?id=100000000000001&v=timeline")
-        self.assertIn("https://m.facebook.com/profile.php?id=100000000000001&v=timeline", urls)
-        self.assertFalse(any("www.facebook.com/test.user" in item for item in urls))
+        self.assertEqual(urls[0], "https://www.facebook.com/test.user?sk=posts")
+        self.assertIn("https://www.facebook.com/test.user", urls)
+        self.assertIn("https://www.facebook.com/profile.php?id=100000000000001", urls)
+        self.assertFalse(any("mbasic.facebook.com" in item or "m.facebook.com" in item for item in urls))
 
     def test_cookie_urls_include_username_and_desktop_posts(self):
         urls = build_facebook_latest_post_probe_urls("100000000000001", "test.user", with_cookie=True)
 
-        self.assertIn("https://www.facebook.com/test.user?sk=posts", urls)
-        self.assertIn("https://mbasic.facebook.com/profile.php?id=100000000000001&v=timeline", urls)
-        self.assertIn("https://www.facebook.com/profile.php?id=100000000000001&sk=posts", urls)
+        self.assertEqual(urls[0], "https://www.facebook.com/test.user?sk=posts")
+        self.assertIn("https://www.facebook.com/test.user", urls)
+        self.assertIn("https://www.facebook.com/profile.php?id=100000000000001", urls)
+        self.assertFalse(any("mbasic.facebook.com" in item or "m.facebook.com" in item for item in urls))
+
+    def test_cookie_candidates_try_no_cookie_last(self):
+        candidates = build_cookie_candidates(request_cookies={"c_user": "100000000000001", "xs": "token"})
+
+        self.assertTrue(candidates[0].has_cookie)
+        self.assertEqual(candidates[-1].source, "no_cookie")
+
+    def test_no_cookie_rejects_field_exception_without_timestamp(self):
+        self.assertFalse(
+            is_trusted_no_cookie_latest_post(
+                {"postId": "123456789012345", "timestamp": 0},
+                "A server error field_exception occured. Check server logs for details.",
+            )
+        )
+        self.assertTrue(is_trusted_no_cookie_latest_post({"postId": "123456789012345", "timestamp": 1760000000}, ""))
 
     def test_extracts_profile_username_from_login_next_redirect(self):
         username = extract_profile_username_from_url(

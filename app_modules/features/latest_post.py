@@ -63,6 +63,13 @@ GENERIC_POST_CONTENT_EXACT = {
     "see posts, photos and more on facebook",
 }
 
+GENERIC_POST_CONTENT_FRAGMENTS = (
+    "server error field_exception",
+    "check server logs for details",
+    "unsupported browser",
+    "browser isn't supported",
+)
+
 
 @dataclass(frozen=True)
 class FetchResult:
@@ -127,6 +134,13 @@ def get_latest_post(
                 attempt = _attempt_record(url, fetch, candidate, header_label)
                 if has_post and has_evidence and http_success:
                     content = extract_latest_post_content_from_html(fetch.text, parsed["postId"])
+                    if not candidate.has_cookie and not is_trusted_no_cookie_latest_post(parsed, content):
+                        attempt["reason"] = f"latest_post_no_cookie_untrusted_http_{fetch.http_code or 0}"
+                        attempts.append(attempt)
+                        best_failure = choose_better_latest_post_result(best_failure, attempt)
+                        if attempt_count >= max_attempts:
+                            return _failure_from_attempt(uid, attempts, best_failure, "latest_post_probe_limit")
+                        continue
                     attempt["reason"] = "ok"
                     attempts.append(attempt)
                     return {
@@ -167,31 +181,30 @@ def build_facebook_latest_post_probe_urls(uid: str, username: str = "", with_coo
 
     urls: list[str] = []
     safe_username = quote(str(username or "").strip().strip("/"), safe=".") if username else ""
-    if with_cookie and safe_username:
+
+    if with_cookie:
+        if safe_username:
+            urls.extend(
+                [
+                    f"https://www.facebook.com/{safe_username}?sk=posts",
+                    f"https://www.facebook.com/{safe_username}",
+                ]
+            )
+        urls.extend(
+            [
+                f"https://www.facebook.com/profile.php?id={normalized_uid}",
+            ]
+        )
+        return _unique(urls)
+
+    if safe_username:
         urls.extend(
             [
                 f"https://www.facebook.com/{safe_username}?sk=posts",
                 f"https://www.facebook.com/{safe_username}",
-                f"https://m.facebook.com/{safe_username}?v=timeline",
-                f"https://mbasic.facebook.com/{safe_username}?v=timeline",
             ]
         )
-
-    urls.extend(
-        [
-            f"https://mbasic.facebook.com/profile.php?id={normalized_uid}&v=timeline",
-            f"https://m.facebook.com/profile.php?id={normalized_uid}&v=timeline",
-        ]
-    )
-
-    if with_cookie:
-        urls.extend(
-            [
-                f"https://www.facebook.com/profile.php?id={normalized_uid}&sk=posts",
-                f"https://www.facebook.com/profile.php?id={normalized_uid}",
-                f"https://www.facebook.com/{normalized_uid}",
-            ]
-        )
+    urls.append(f"https://www.facebook.com/profile.php?id={normalized_uid}")
 
     return _unique(urls)
 
@@ -332,6 +345,18 @@ def extract_json_content_candidates_from_text(text_raw: Any) -> list[str]:
     return candidates
 
 
+def is_trusted_no_cookie_latest_post(parsed_raw: Any, content_raw: Any) -> bool:
+    parsed = parsed_raw if isinstance(parsed_raw, Mapping) else {}
+    timestamp = normalize_unix_timestamp_seconds(parsed.get("timestamp"))
+    if timestamp:
+        return True
+    content = clean_facebook_post_content(content_raw)
+    if not content:
+        return False
+    lowered = content.lower()
+    return not any(fragment in lowered for fragment in GENERIC_POST_CONTENT_FRAGMENTS)
+
+
 def has_latest_post_evidence_in_html(html_raw: Any, post_id_raw: Any) -> bool:
     html = normalize_facebook_payload_text(html_raw)
     post_id = str(post_id_raw or "").strip()
@@ -388,8 +413,8 @@ def build_cookie_candidates(
     request_cookies: Mapping[str, Any] | None = None,
     request_cookie_pool: list[Mapping[str, Any]] | None = None,
 ) -> list[CookieCandidate]:
-    candidates = [CookieCandidate("no_cookie", {})]
-    seen = {""}
+    candidates: list[CookieCandidate] = []
+    seen: set[str] = set()
 
     request_cookie = _normalize_cookie_dict(request_cookies)
     if request_cookie:
@@ -410,6 +435,7 @@ def build_cookie_candidates(
         seen.add(fingerprint)
         candidates.append(CookieCandidate(account.source, dict(account.cookies), account.masked_id))
 
+    candidates.append(CookieCandidate("no_cookie", {}))
     return candidates
 
 
@@ -652,11 +678,8 @@ def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchRe
 
 def _headers_for_candidate(candidate: CookieCandidate) -> list[tuple[str, dict[str, str]]]:
     if not candidate.has_cookie:
-        return [("no_cookie_mobile", _base_headers(_mobile_user_agent()))]
-    return [
-        ("cookie_mobile", _cookie_headers(candidate.cookies, _mobile_user_agent())),
-        ("cookie_desktop", _cookie_headers(candidate.cookies, _desktop_user_agent())),
-    ]
+        return [("no_cookie_desktop", _base_headers(_desktop_user_agent()))]
+    return [("cookie_desktop", _cookie_headers(candidate.cookies, _desktop_user_agent()))]
 
 
 def _base_headers(user_agent: str) -> dict[str, str]:
@@ -804,9 +827,9 @@ def _max_probe_attempts() -> int:
 
 def _cookie_account_limit() -> int:
     try:
-        return max(0, int(os.getenv("LATEST_POST_COOKIE_ACCOUNT_LIMIT", "2")))
+        return max(0, int(os.getenv("LATEST_POST_COOKIE_ACCOUNT_LIMIT", "5")))
     except ValueError:
-        return 2
+        return 5
 
 
 def _is_auth_wall(body_low: str, final_url: str) -> bool:
