@@ -1,15 +1,17 @@
 import unittest
 from unittest.mock import patch
 
-from app_modules.api.controller import LatestPostRequest, latest_post_input
+from app_modules.api.controller import LatestPostRequest, checkpost_direct_input, latest_post_input
 from app_modules.features.latest_post import (
     FetchResult,
     build_cookie_candidates,
+    build_direct_latest_post_probe_urls,
     build_facebook_latest_post_probe_urls,
     build_latest_post_link,
     clean_facebook_post_content,
     extract_latest_post_content_from_html,
     extract_profile_username_from_url,
+    get_latest_post_direct_from_input,
     is_trusted_no_cookie_latest_post,
     parse_latest_post_from_html,
 )
@@ -54,6 +56,14 @@ class Step6LatestPostTests(unittest.TestCase):
         )
 
         self.assertEqual(username, "lamquoccuong.media")
+
+    def test_build_direct_latest_post_urls_strip_comment_query(self):
+        urls = build_direct_latest_post_probe_urls(
+            "https://www.facebook.com/phuc121296?comment_id=abc"
+        )
+
+        self.assertEqual(urls[0], "https://www.facebook.com/phuc121296?sk=posts")
+        self.assertIn("https://www.facebook.com/phuc121296", urls)
 
     def test_parse_latest_post_pair(self):
         html = '"post_id":"123456789012345" abc "publish_time":1760000000'
@@ -110,6 +120,60 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(payload["method"], "no_cookie")
         self.assertIn("elapsedMs", payload)
 
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_direct_uses_no_cookie_before_cookie_without_resolver(self, fetch_text, load_cookie_accounts):
+        load_cookie_accounts.return_value = [_cookie_account()]
+        fetch_text.return_value = FetchResult(
+            200,
+            (
+                '"post_id":"123456789012345"'
+                '"publish_time":1760000000'
+                '"message":{"text":"Direct latest post content"}'
+            ),
+            "https://www.facebook.com/test.user?sk=posts",
+            "ok",
+        )
+
+        payload = checkpost_direct_input(LatestPostRequest(input="https://www.facebook.com/test.user?comment_id=abc"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["uid"], "")
+        self.assertEqual(payload["username"], "test.user")
+        self.assertEqual(payload["postId"], "123456789012345")
+        self.assertEqual(payload["content"], "Direct latest post content")
+        self.assertEqual(payload["method"], "direct_no_cookie")
+        self.assertEqual(payload["source"], "direct_link_scrape")
+        self.assertEqual(fetch_text.call_count, 1)
+        first_call_url = fetch_text.call_args.args[0]
+        self.assertEqual(first_call_url, "https://www.facebook.com/test.user?sk=posts")
+
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_direct_falls_back_to_cookie(self, fetch_text, load_cookie_accounts):
+        load_cookie_accounts.return_value = [_cookie_account()]
+        fetch_text.side_effect = [
+            FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/test.user", "ok"),
+            FetchResult(
+                200,
+                (
+                    '"post_id":"123456789012345"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Cookie latest post content"}'
+                ),
+                "https://www.facebook.com/test.user?sk=posts",
+                "ok",
+            ),
+        ]
+
+        payload = get_latest_post_direct_from_input("https://www.facebook.com/test.user")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["method"], "direct_with_cookie")
+        self.assertEqual(payload["content"], "Cookie latest post content")
+        self.assertEqual(fetch_text.call_count, 3)
+
 
 def _resolved(uid="", username="", resolver_name=""):
     return ResolvedInput(
@@ -120,6 +184,17 @@ def _resolved(uid="", username="", resolver_name=""):
         source="test",
         reason="test",
         resolver_name=resolver_name,
+    )
+
+
+def _cookie_account():
+    from app_modules.resolvers.facebook_cookies import CookieAccount
+
+    return CookieAccount(
+        c_user="100000000000099",
+        source="test_cookie_file",
+        index=0,
+        cookies={"c_user": "100000000000099", "xs": "fake-xs-token"},
     )
 
 

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app_modules.checkers.live_die import check_live_die
 from app_modules.core.config import get_config
-from app_modules.features.latest_post import get_latest_post
+from app_modules.features.latest_post import get_latest_post, get_latest_post_direct_from_input, sanitize_latest_post_input
 from app_modules.features.profile_name import choose_profile_name, resolve_profile_name
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
 from app_modules.resolvers.uid_resolver import resolve_input
@@ -169,6 +169,21 @@ def latest_post_input(req: LatestPostRequest) -> dict[str, Any]:
     result["username"] = resolved.username
     result["name"] = str(getattr(resolved, "resolver_name", "") or "").strip()
     result["canonicalUrl"] = resolved.canonical_url
+    return result
+
+
+def checkpost_direct_input(req: LatestPostRequest) -> dict[str, Any]:
+    started = perf_counter()
+    raw_input = (req.input or req.url or req.uid or "").strip()
+    cleaned_input = sanitize_latest_post_input(raw_input)
+    result = get_latest_post_direct_from_input(
+        cleaned_input,
+        request_cookies=req.cookies,
+        request_cookie_pool=req.cookiesPool or req.cookies_pool,
+    )
+    result["elapsedMs"] = int((perf_counter() - started) * 1000)
+    result["input"] = cleaned_input
+    result["canonicalUrl"] = cleaned_input
     return result
 
 

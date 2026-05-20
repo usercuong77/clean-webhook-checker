@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit, urlunsplit
 
 import requests
 
@@ -69,6 +69,8 @@ GENERIC_POST_CONTENT_FRAGMENTS = (
     "unsupported browser",
     "browser isn't supported",
 )
+
+INVISIBLE_INPUT_CHARS_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE0E\uFE0F]")
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,174 @@ def get_latest_post(
                     return _failure_from_attempt(uid, attempts, best_failure, "latest_post_probe_limit")
 
     return _failure_from_attempt(uid, attempts, best_failure, "latest_post_not_found")
+
+
+def get_latest_post_direct_from_input(
+    input_raw: Any,
+    request_cookies: Mapping[str, Any] | None = None,
+    request_cookie_pool: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    cleaned_input = sanitize_latest_post_input(input_raw)
+    probe_urls = build_direct_latest_post_probe_urls(cleaned_input)
+    if not probe_urls:
+        return _empty_result("", "direct_invalid_input", "invalid_facebook_link", 0)
+
+    attempts: list[dict[str, Any]] = []
+    best_failure: dict[str, Any] | None = None
+    timeout = _request_timeout()
+
+    direct_uid = extract_direct_uid_from_facebook_url(cleaned_input)
+    direct_username = extract_profile_username_from_url(cleaned_input)
+    direct_candidates = [CookieCandidate("no_cookie", {})]
+    direct_candidates.extend([candidate for candidate in build_cookie_candidates(request_cookies, request_cookie_pool) if candidate.has_cookie])
+
+    for candidate in direct_candidates:
+        for url in probe_urls:
+            for header_label, headers in _headers_for_candidate(candidate):
+                fetch = _fetch_text(url, headers, timeout)
+                parsed = parse_latest_post_from_html(fetch.text)
+                has_post = bool(parsed and is_latest_post_id_token(parsed.get("postId")))
+                has_evidence = bool(has_post and has_latest_post_evidence_in_html(fetch.text, parsed.get("postId")))
+                http_success = 200 <= fetch.http_code < 400
+                attempt = _attempt_record(url, fetch, candidate, header_label)
+
+                if has_post and has_evidence and http_success:
+                    content = extract_latest_post_content_from_html(fetch.text, parsed["postId"])
+                    if not candidate.has_cookie and not is_trusted_no_cookie_latest_post(parsed, content):
+                        attempt["reason"] = f"latest_post_no_cookie_untrusted_http_{fetch.http_code or 0}"
+                        attempts.append(attempt)
+                        best_failure = choose_better_latest_post_result(best_failure, attempt)
+                        continue
+
+                    post_link = extract_facebook_post_url_from_html(fetch.text) or build_direct_latest_post_link(
+                        cleaned_input,
+                        parsed["postId"],
+                        direct_uid,
+                        direct_username,
+                    )
+                    attempt["reason"] = "ok"
+                    attempts.append(attempt)
+                    return {
+                        "ok": True,
+                        "uid": direct_uid,
+                        "username": direct_username,
+                        "name": "",
+                        "postId": parsed["postId"],
+                        "timestamp": parsed["timestamp"],
+                        "link": post_link,
+                        "content": content,
+                        "postContent": content,
+                        "method": "direct_with_cookie" if candidate.has_cookie else "direct_no_cookie",
+                        "source": "direct_link_scrape",
+                        "reason": "ok",
+                        "httpCode": fetch.http_code,
+                        "probeUrl": url,
+                        "finalUrl": fetch.final_url,
+                        "cookieSource": candidate.source,
+                        "cookieFallbackUsed": candidate.has_cookie,
+                        "probeAttempts": attempts,
+                        "directInput": cleaned_input,
+                    }
+
+                fail_reason = build_latest_post_failure_reason(fetch.text, fetch.final_url, fetch.http_code)
+                if has_post and not has_evidence and http_success:
+                    fail_reason = f"latest_post_candidate_untrusted_http_{fetch.http_code or 0}"
+                attempt["reason"] = fail_reason
+                attempts.append(attempt)
+                best_failure = choose_better_latest_post_result(best_failure, attempt)
+
+    failure = _failure_from_attempt(direct_uid, attempts, best_failure, "direct_latest_post_not_found")
+    failure["username"] = direct_username
+    failure["name"] = ""
+    failure["source"] = "direct_link_scrape"
+    failure["directInput"] = cleaned_input
+    return failure
+
+
+def sanitize_latest_post_input(input_raw: Any) -> str:
+    value = INVISIBLE_INPUT_CHARS_RE.sub("", str(input_raw or ""))
+    value = value.replace("\u00A0", " ").strip()
+    if value and not re.match(r"^[a-z][a-z0-9+.-]*://", value, flags=re.IGNORECASE):
+        if "." in value or "/" in value:
+            value = f"https://{value.lstrip('/')}"
+    return value
+
+
+def build_direct_latest_post_probe_urls(input_raw: Any) -> list[str]:
+    value = sanitize_latest_post_input(input_raw)
+    if not value:
+        return []
+
+    uid = normalize_uid(value)
+    if uid:
+        return [f"https://www.facebook.com/profile.php?id={quote(uid, safe='')}&sk=posts"]
+
+    parsed = urlsplit(value)
+    host = parsed.netloc.lower()
+    if "facebook.com" not in host:
+        return []
+
+    path = parsed.path or "/"
+    path_lower = path.lower()
+    urls: list[str] = []
+    if path_lower.endswith("/posts") or "/posts/" in path_lower or "story.php" in path_lower or "permalink.php" in path_lower:
+        urls.append(urlunsplit((parsed.scheme or "https", parsed.netloc or "www.facebook.com", path, parsed.query, "")))
+
+    if path_lower.strip("/") == "profile.php":
+        query = parse_qs(parsed.query)
+        uid_values = query.get("id") or []
+        uid = normalize_uid(uid_values[0] if uid_values else "")
+        if uid:
+            urls.append(f"https://www.facebook.com/profile.php?id={quote(uid, safe='')}&sk=posts")
+            urls.append(f"https://www.facebook.com/profile.php?id={quote(uid, safe='')}")
+    else:
+        base = urlunsplit((parsed.scheme or "https", parsed.netloc or "www.facebook.com", path, "", ""))
+        urls.append(_with_query_param(base, "sk=posts"))
+        urls.append(base)
+
+    original = urlunsplit((parsed.scheme or "https", parsed.netloc or "www.facebook.com", path, parsed.query, ""))
+    urls.append(original)
+    return _unique(urls)
+
+
+def extract_direct_uid_from_facebook_url(input_raw: Any) -> str:
+    value = sanitize_latest_post_input(input_raw)
+    uid = normalize_uid(value)
+    if uid:
+        return uid
+    parsed = urlsplit(value)
+    if "facebook.com" not in parsed.netloc.lower():
+        return ""
+    if parsed.path.strip("/").lower() == "profile.php":
+        values = parse_qs(parsed.query).get("id") or []
+        return normalize_uid(values[0] if values else "")
+    first_segment = parsed.path.strip("/").split("/", 1)[0]
+    return normalize_uid(first_segment)
+
+
+def build_direct_latest_post_link(input_raw: Any, post_id_raw: Any, uid: str = "", username: str = "") -> str:
+    post_id = str(post_id_raw or "").strip()
+    if not post_id:
+        return ""
+    if uid:
+        return build_latest_post_link(uid, post_id)
+    if username:
+        return f"https://www.facebook.com/{quote(username, safe='.')}/posts/{quote(post_id, safe='')}"
+
+    parsed = urlsplit(sanitize_latest_post_input(input_raw))
+    path = parsed.path.strip("/")
+    first_segment = path.split("/", 1)[0].strip()
+    if first_segment and first_segment.lower() != "profile.php":
+        return f"https://www.facebook.com/{quote(first_segment, safe='.')}/posts/{quote(post_id, safe='')}"
+    return ""
+
+
+def _with_query_param(url: str, query: str) -> str:
+    parsed = urlsplit(url)
+    merged = parsed.query
+    if query not in merged:
+        merged = f"{merged}&{query}" if merged else query
+    return urlunsplit((parsed.scheme or "https", parsed.netloc or "www.facebook.com", parsed.path or "/", merged, ""))
 
 
 def build_facebook_latest_post_probe_urls(uid: str, username: str = "", with_cookie: bool = False) -> list[str]:

@@ -8,6 +8,7 @@ from app_modules.api.controller import (
     VipLikeOrderRequest,
     check_input,
     check_name_input,
+    checkpost_direct_input,
     check_tick_input,
     health_payload,
     latest_post_input,
@@ -77,10 +78,16 @@ def check_tick(req: CheckRequest, x_api_key: str | None = Header(default=None)) 
 
 @app.post("/latest-post")
 @app.post("/latest-post/")
-@app.post("/checkpost")
 def latest_post(req: LatestPostRequest, x_api_key: str | None = Header(default=None)) -> dict:
     require_api_key(x_api_key)
     return latest_post_input(req)
+
+
+@app.post("/checkpost")
+@app.post("/checkpost/")
+def check_post(req: LatestPostRequest, x_api_key: str | None = Header(default=None)) -> dict:
+    require_api_key(x_api_key)
+    return checkpost_direct_input(req)
 
 
 @app.post("/realtime/check-bulk")
