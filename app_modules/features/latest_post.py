@@ -4,6 +4,7 @@ import html as html_lib
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlsplit, urlunsplit
@@ -71,6 +72,7 @@ GENERIC_POST_CONTENT_FRAGMENTS = (
 )
 
 INVISIBLE_INPUT_CHARS_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE0E\uFE0F]")
+DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -192,10 +194,15 @@ def get_latest_post_direct_from_input(
 
     direct_uid = extract_direct_uid_from_facebook_url(cleaned_input)
     direct_username = extract_profile_username_from_url(cleaned_input)
-    direct_candidates = [CookieCandidate("no_cookie", {})]
-    direct_candidates.extend([candidate for candidate in build_cookie_candidates(request_cookies, request_cookie_pool) if candidate.has_cookie])
+    cache_key = _direct_checkpost_cache_key(cleaned_input, direct_uid, direct_username)
+    cookie_candidates = [candidate for candidate in build_cookie_candidates(request_cookies, request_cookie_pool) if candidate.has_cookie]
+    direct_candidates: list[CookieCandidate] = []
+    if not cookie_candidates or not _direct_checkpost_requires_cookie(cache_key):
+        direct_candidates.append(CookieCandidate("no_cookie", {}))
+    direct_candidates.extend(cookie_candidates)
 
     for candidate in direct_candidates:
+        move_to_cookie = False
         for url in probe_urls:
             for header_label, headers in _headers_for_candidate(candidate):
                 fetch = _fetch_text(url, headers, timeout)
@@ -249,6 +256,13 @@ def get_latest_post_direct_from_input(
                 attempt["reason"] = fail_reason
                 attempts.append(attempt)
                 best_failure = choose_better_latest_post_result(best_failure, attempt)
+                if not candidate.has_cookie and _is_direct_no_cookie_terminal_reason(fail_reason):
+                    _remember_direct_checkpost_requires_cookie(cache_key)
+                    attempt["fastFallbackToCookie"] = True
+                    move_to_cookie = True
+                    break
+            if move_to_cookie:
+                break
 
     failure = _failure_from_attempt(direct_uid, attempts, best_failure, "direct_latest_post_not_found")
     failure["username"] = direct_username
@@ -334,6 +348,57 @@ def build_direct_latest_post_link(input_raw: Any, post_id_raw: Any, uid: str = "
     if first_segment and first_segment.lower() != "profile.php":
         return f"https://www.facebook.com/{quote(first_segment, safe='.')}/posts/{quote(post_id, safe='')}"
     return ""
+
+
+def _direct_checkpost_cache_key(input_raw: Any, uid: str = "", username: str = "") -> str:
+    if uid:
+        return f"uid:{uid}"
+    if username:
+        return f"username:{username.strip().lower()}"
+    value = sanitize_latest_post_input(input_raw)
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    host = parsed.netloc.lower()
+    path = parsed.path.rstrip("/") or "/"
+    query = parsed.query if path.lower().strip("/") == "profile.php" else ""
+    return urlunsplit(("https", host, path, query, "")).lower()
+
+
+def _direct_checkpost_requires_cookie(cache_key: str) -> bool:
+    if not cache_key:
+        return False
+    expires_at = DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE.get(cache_key)
+    if not expires_at:
+        return False
+    if expires_at <= time.time():
+        DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE.pop(cache_key, None)
+        return False
+    return True
+
+
+def _remember_direct_checkpost_requires_cookie(cache_key: str) -> None:
+    if cache_key:
+        DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE[cache_key] = time.time() + _direct_checkpost_requires_cookie_ttl()
+
+
+def _direct_checkpost_requires_cookie_ttl() -> int:
+    try:
+        configured = int(os.getenv("CHECKPOST_REQUIRES_COOKIE_CACHE_TTL_SEC", "21600"))
+    except ValueError:
+        configured = 21600
+    return max(300, min(configured, 86400))
+
+
+def _is_direct_no_cookie_terminal_reason(reason_raw: Any) -> bool:
+    reason = str(reason_raw or "")
+    return (
+        reason == "auth_wall"
+        or reason == "checkpoint_detected"
+        or reason == "profile_unavailable"
+        or reason.startswith("timeline_shell_no_post_data")
+        or reason.startswith("unsupported_browser_interstitial")
+    )
 
 
 def _with_query_param(url: str, query: str) -> str:
