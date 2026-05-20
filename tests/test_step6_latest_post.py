@@ -148,7 +148,7 @@ class Step6LatestPostTests(unittest.TestCase):
 
     @patch("app_modules.features.latest_post.load_cookie_accounts", return_value=[])
     @patch("app_modules.features.latest_post._fetch_text")
-    def test_checkpost_direct_skips_tagged_actor_post(self, fetch_text, load_cookie_accounts):
+    def test_checkpost_direct_returns_tagged_timeline_post(self, fetch_text, load_cookie_accounts):
         fetch_text.return_value = FetchResult(
             200,
             (
@@ -164,17 +164,16 @@ class Step6LatestPostTests(unittest.TestCase):
 
         payload = get_latest_post_direct_from_input("https://www.facebook.com/heoximang.kisutl")
 
-        self.assertFalse(payload["ok"])
-        self.assertEqual(payload["reason"], "tagged_post_skipped_no_owner_post_found")
-        self.assertTrue(payload["taggedPostSkipped"])
-        self.assertTrue(payload["needsOwnerResolve"])
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["postId"], "965988279745648")
+        self.assertEqual(payload["content"], "Tagged actor content")
+        self.assertEqual(payload["reason"], "ok")
         self.assertEqual(payload["ownerUid"], "100005122057274")
         self.assertEqual(payload["actorUid"], "100025834400095")
 
-    @patch.dict("os.environ", {"CHECKPOST_TAGGED_COOKIE_SCAN_LIMIT": "2"})
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
-    def test_checkpost_direct_limits_tagged_cookie_scan(self, fetch_text, load_cookie_accounts):
+    def test_checkpost_direct_returns_first_cookie_timeline_post(self, fetch_text, load_cookie_accounts):
         load_cookie_accounts.return_value = [
             _cookie_account("100000000000077"),
             _cookie_account("100000000000088"),
@@ -199,9 +198,10 @@ class Step6LatestPostTests(unittest.TestCase):
             prefer_cookie=True,
         )
 
-        self.assertFalse(payload["ok"])
-        self.assertEqual(fetch_text.call_count, 2)
-        self.assertEqual(payload["reason"], "tagged_post_skipped_no_owner_post_found")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(fetch_text.call_count, 1)
+        self.assertEqual(payload["reason"], "ok")
+        self.assertEqual(payload["actorUid"], "100025834400095")
 
     @patch("app_modules.features.latest_post.load_cookie_accounts", return_value=[])
     @patch("app_modules.features.latest_post._fetch_text")
@@ -230,44 +230,29 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(payload["method"], "no_cookie")
         self.assertIn("elapsedMs", payload)
 
-    @patch("app_modules.api.controller.resolve_input")
     @patch("app_modules.api.controller.get_latest_post_direct_from_input")
-    def test_checkpost_controller_resolves_owner_after_tagged_skip(self, direct_latest_post, resolve_input):
-        resolve_input.return_value = _resolved(
-            uid="100005122057274",
-            username="heoximang.kisutl",
-            resolver_name="Văn Trung",
-        )
-        direct_latest_post.side_effect = [
-            {
-                "ok": False,
-                "reason": "tagged_post_skipped_no_owner_post_found",
-                "taggedPostSkipped": True,
-                "needsOwnerResolve": True,
-                "ownerUid": "100005122057274",
-                "actorUid": "100025834400095",
-                "actorName": "Vĩnh Văn",
-                "probeAttempts": [],
-            },
-            {
-                "ok": False,
-                "reason": "tagged_post_skipped_no_owner_post_found",
-                "taggedPostSkipped": True,
-                "probeAttempts": [],
-            },
-        ]
+    def test_checkpost_controller_does_not_resolve_owner_for_timeline_post(self, direct_latest_post):
+        direct_latest_post.return_value = {
+            "ok": True,
+            "reason": "ok",
+            "uid": "",
+            "username": "heoximang.kisutl",
+            "postId": "965988279745648",
+            "content": "Tagged actor content",
+            "ownerUid": "100005122057274",
+            "actorUid": "100025834400095",
+            "actorName": "Vĩnh Văn",
+            "probeAttempts": [],
+        }
 
         payload = checkpost_direct_input(LatestPostRequest(input="https://www.facebook.com/heoximang.kisutl"))
 
-        self.assertFalse(payload["ok"])
-        self.assertEqual(payload["uid"], "100005122057274")
-        self.assertEqual(payload["name"], "Văn Trung")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["postId"], "965988279745648")
+        self.assertEqual(payload["actorUid"], "100025834400095")
         self.assertEqual(payload["username"], "heoximang.kisutl")
-        self.assertTrue(payload["skippedTaggedPost"])
-        self.assertEqual(payload["ownerResolveSource"], "test")
-        self.assertEqual(direct_latest_post.call_count, 2)
-        self.assertEqual(direct_latest_post.call_args.kwargs["owner_uid"], "100005122057274")
-        self.assertFalse(direct_latest_post.call_args.kwargs["prefer_cookie"])
+        self.assertEqual(direct_latest_post.call_count, 1)
+        self.assertNotIn("owner_uid", direct_latest_post.call_args.kwargs)
 
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
