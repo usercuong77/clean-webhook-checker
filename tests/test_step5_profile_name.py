@@ -1,7 +1,9 @@
 import unittest
 from unittest.mock import Mock, patch
 
+from app_modules.api.controller import CheckRequest, check_input, check_name_input
 from app_modules.checkers.live_die import LiveDieResult
+from app_modules.checkers.probe_result import ProbeResult
 from app_modules.features.profile_name import (
     build_profile_name_urls,
     choose_profile_name,
@@ -96,6 +98,36 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(live_name, "Kiều Anh")
         self.assertEqual(die_name, "")
         self.assertEqual(fetch_text.call_count, 1)
+
+    @patch("app_modules.checkers.live_die.dispatch_mode")
+    @patch("app_modules.features.profile_name._fetch_text")
+    @patch.dict("app_modules.api.controller.os.environ", {"PROFILE_NAME_LOOKUP_ENABLED": "0"}, clear=False)
+    def test_checkname_bypasses_default_check_name_gate(self, fetch_text, dispatch_mode):
+        fetch_text.return_value = _fetch_result(
+            200,
+            '<meta property="og:title" content="Name Command">',
+            "https://www.facebook.com/test.user",
+            "ok",
+        )
+        dispatch_mode.return_value = (
+            "1",
+            ProbeResult(
+                status="LIVE",
+                confidence="strong",
+                source="mode1_graph_public",
+                reason="graph_profile_picture_dimensions",
+                http_code=200,
+                details={},
+            ),
+        )
+
+        check_payload = check_input(CheckRequest(input="100000000000001", mode="1", includeName=True))
+        name_payload = check_name_input(CheckRequest(input="100000000000001", mode="1", includeName=True))
+
+        self.assertEqual(check_payload["name"], "")
+        self.assertEqual(name_payload["name"], "Name Command")
+        self.assertEqual(name_payload["nameSource"], "profile_name_public")
+        self.assertEqual(name_payload["nameReason"], "name_found_public")
 
     @patch("app_modules.features.profile_name._fetch_text")
     @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
