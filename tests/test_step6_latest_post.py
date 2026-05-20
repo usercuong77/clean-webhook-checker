@@ -171,6 +171,38 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(payload["ownerUid"], "100005122057274")
         self.assertEqual(payload["actorUid"], "100025834400095")
 
+    @patch.dict("os.environ", {"CHECKPOST_TAGGED_COOKIE_SCAN_LIMIT": "2"})
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_direct_limits_tagged_cookie_scan(self, fetch_text, load_cookie_accounts):
+        load_cookie_accounts.return_value = [
+            _cookie_account("100000000000077"),
+            _cookie_account("100000000000088"),
+            _cookie_account("100000000000099"),
+        ]
+        fetch_text.return_value = FetchResult(
+            200,
+            (
+                '<meta property="al:android:url" content="fb://profile/100005122057274">'
+                '"post_id":"965988279745648"'
+                '"publish_time":1778113653'
+                '"actors":[{"__typename":"User","name":"V\\u0129nh V\\u0103n","id":"100025834400095"}]'
+                '"message":{"text":"Tagged actor content"}'
+            ),
+            "https://www.facebook.com/heoximang.kisutl?sk=posts",
+            "ok",
+        )
+
+        payload = get_latest_post_direct_from_input(
+            "https://www.facebook.com/heoximang.kisutl",
+            owner_uid="100005122057274",
+            prefer_cookie=True,
+        )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(fetch_text.call_count, 2)
+        self.assertEqual(payload["reason"], "tagged_post_skipped_no_owner_post_found")
+
     @patch("app_modules.features.latest_post.load_cookie_accounts", return_value=[])
     @patch("app_modules.features.latest_post._fetch_text")
     @patch("app_modules.api.controller.resolve_input")

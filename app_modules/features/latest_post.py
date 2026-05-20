@@ -226,6 +226,8 @@ def get_latest_post_direct_from_input(
         direct_candidates.append(CookieCandidate("no_cookie", {}))
     direct_candidates.extend(cookie_candidates)
 
+    tagged_cookie_scan_count = 0
+    stop_all_candidates = False
     for candidate in direct_candidates:
         move_to_next_candidate = False
         for url in probe_urls:
@@ -249,6 +251,10 @@ def get_latest_post_direct_from_input(
                         attempts.append(attempt)
                         best_failure = choose_better_latest_post_result(best_failure, attempt)
                         _remember_direct_checkpost_requires_cookie(cache_key)
+                        if candidate.has_cookie:
+                            tagged_cookie_scan_count += 1
+                            if expected_owner_uid and tagged_cookie_scan_count >= _direct_tagged_cookie_scan_limit():
+                                stop_all_candidates = True
                         if not candidate.has_cookie:
                             attempt["fastFallbackToCookie"] = True
                         move_to_next_candidate = True
@@ -309,6 +315,8 @@ def get_latest_post_direct_from_input(
                     break
             if move_to_next_candidate:
                 break
+        if stop_all_candidates:
+            break
 
     failure = _failure_from_attempt(direct_uid, attempts, best_failure, "direct_latest_post_not_found")
     failure["username"] = direct_username
@@ -512,6 +520,14 @@ def _direct_checkpost_requires_cookie_ttl() -> int:
     except ValueError:
         configured = 21600
     return max(300, min(configured, 86400))
+
+
+def _direct_tagged_cookie_scan_limit() -> int:
+    try:
+        configured = int(os.getenv("CHECKPOST_TAGGED_COOKIE_SCAN_LIMIT", "2"))
+    except ValueError:
+        configured = 2
+    return max(1, min(configured, 10))
 
 
 def _prioritize_direct_cookie_candidates(candidates: list[CookieCandidate]) -> list[CookieCandidate]:
