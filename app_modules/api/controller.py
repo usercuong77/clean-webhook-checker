@@ -119,13 +119,13 @@ def check_tick_input(req: CheckRequest) -> dict[str, Any]:
     live_die = check_live_die(resolved, mode=req.mode)
 
     if live_die.status == "LIVE":
-        name_result = resolve_profile_name(resolved)
+        name_result = resolve_profile_name(resolved, include_verified=True)
         name = name_result.name or resolved.username or resolved.uid
     else:
         name_result = None
         name = ""
 
-    verified_label = _verified_account_label(name)
+    verified_label = (name_result.verified_label if name_result else "") or _verified_account_label(name)
     elapsed_ms = int((perf_counter() - started) * 1000)
     return {
         "ok": True,

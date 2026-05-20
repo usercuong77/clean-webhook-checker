@@ -9,6 +9,7 @@ from app_modules.features.profile_name import (
     choose_profile_name,
     clear_profile_name_cache,
     extract_profile_name,
+    extract_profile_verified_label,
     is_valid_profile_name,
     resolve_profile_name,
 )
@@ -56,6 +57,16 @@ class Step5ProfileNameTests(unittest.TestCase):
         """
 
         self.assertEqual(extract_profile_name(html), "Độ Phùng Verified account")
+
+    def test_extracts_verified_from_profile_markers(self):
+        self.assertEqual(
+            extract_profile_verified_label('"show_verified_badge_on_profile":true'),
+            "Tài khoản đã xác minh",
+        )
+        self.assertEqual(
+            extract_profile_verified_label('"is_verified":true'),
+            "Tài khoản đã xác minh",
+        )
 
     def test_builds_username_and_uid_urls(self):
         resolved = _resolved(uid="100000000000001", username="test.user")

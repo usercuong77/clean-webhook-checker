@@ -82,6 +82,12 @@ ATTR_RE = re.compile(
 )
 
 MAX_NAME_CACHE_ITEMS = 1000
+VERIFIED_ACCOUNT_LABEL = "T\u00e0i kho\u1ea3n \u0111\u00e3 x\u00e1c minh"
+VERIFIED_MARKER_PATTERNS = [
+    re.compile(r'"show_verified_badge_on_profile"\s*:\s*true', re.IGNORECASE),
+    re.compile(r'"is_verified"\s*:\s*true', re.IGNORECASE),
+    re.compile(r'"isVerified"\s*:\s*true', re.IGNORECASE),
+]
 BUILTIN_CONFIRMED_PROFILE_NAME_MAP = {
     "100080441816993": "Ng Trinh",
     "100010211341364": "Vo Khac Duy",
@@ -92,7 +98,7 @@ BUILTIN_CONFIRMED_PROFILE_NAME_MAP = {
     "100002614628083": "Thanh Cuong",
     "9209278": "Nguyen Minh Huy",
 }
-_NAME_CACHE: OrderedDict[str, str] = OrderedDict()
+_NAME_CACHE: OrderedDict[str, CachedProfileName] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -101,6 +107,14 @@ class ProfileNameResult:
     source: str
     reason: str
     probes: list[dict[str, Any]] = field(default_factory=list)
+    verified_label: str = ""
+
+
+@dataclass(frozen=True)
+class CachedProfileName:
+    name: str
+    verified_label: str = ""
+    verified_checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,17 +143,18 @@ def choose_profile_name(
     return resolved.username or resolved.uid
 
 
-def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
+def resolve_profile_name(resolved: ResolvedInput, include_verified: bool = False) -> ProfileNameResult:
     uid = str(resolved.uid or "").strip()
+    known_name = ""
     if uid:
         known_name = _known_profile_name(uid)
-        if known_name:
-            _cache_put(uid, known_name)
+        if known_name and not include_verified:
+            _cache_put(uid, known_name, verified_checked=False)
             return ProfileNameResult(known_name, "profile_name_known_map", "name_found_known_map")
 
-        cached = _cache_get(uid)
+        cached = _cache_get_result(uid, include_verified=include_verified)
         if cached:
-            return ProfileNameResult(cached, "uid_name_cache", "cache_hit")
+            return cached
 
     urls = build_profile_name_urls(resolved)
     if not urls:
@@ -172,6 +187,7 @@ def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
                 )
                 continue
             name = extract_profile_name(fetch.text)
+            verified_label = extract_profile_verified_label(fetch.text)
             probe = _probe_record(
                 "profile_name_cookie",
                 url,
@@ -179,15 +195,26 @@ def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
                 name,
                 account.masked_id,
                 header_label=header_label,
+                verified_label=verified_label,
             )
             probes.append(probe)
             if name:
-                _cache_put(uid, name)
-                return ProfileNameResult(name, "profile_name_cookie", "name_found_cookie", probes)
+                _cache_put(uid, name, verified_label=verified_label, verified_checked=True)
+                return ProfileNameResult(
+                    name,
+                    "profile_name_cookie",
+                    "name_found_cookie",
+                    probes,
+                    verified_label=verified_label,
+                )
+
+    if known_name:
+        _cache_put(uid, known_name, verified_checked=False)
+        return ProfileNameResult(known_name, "profile_name_known_map", "name_found_known_map", probes)
 
     resolver_name = str(getattr(resolved, "resolver_name", "") or "").strip()
     if resolver_name and is_valid_profile_name(resolver_name):
-        _cache_put(uid, resolver_name)
+        _cache_put(uid, resolver_name, verified_checked=False)
         return ProfileNameResult(resolver_name, "resolver_name", "name_found_resolver", probes)
 
     return ProfileNameResult("", "profile_name", "name_not_found", probes)
@@ -269,6 +296,23 @@ def extract_profile_name(html: str) -> str:
         clean = clean_profile_name_candidate(candidate)
         if is_valid_profile_name(clean):
             return clean
+    return ""
+
+
+def extract_profile_verified_label(html: str) -> str:
+    text = str(html or "")
+    if not text:
+        return ""
+
+    lowered = text.lower()
+    if "verified account" in lowered:
+        return "Verified account"
+    if "t\u00e0i kho\u1ea3n \u0111\u00e3 x\u00e1c minh" in lowered:
+        return VERIFIED_ACCOUNT_LABEL
+
+    for pattern in VERIFIED_MARKER_PATTERNS:
+        if pattern.search(text):
+            return VERIFIED_ACCOUNT_LABEL
     return ""
 
 
@@ -400,6 +444,7 @@ def _probe_record(
     cookie_account: str = "",
     reason: str | None = None,
     header_label: str = "",
+    verified_label: str = "",
 ) -> dict[str, Any]:
     item = {
         "source": source,
@@ -413,6 +458,8 @@ def _probe_record(
         item["cookieAccount"] = cookie_account
     if header_label:
         item["header"] = header_label
+    if verified_label:
+        item["verifiedLabel"] = verified_label
     return item
 
 
@@ -471,22 +518,39 @@ def _cookie_account_limit() -> int:
         return 2
 
 
-def _cache_get(uid: str) -> str:
+def _cache_get_result(uid: str, include_verified: bool = False) -> ProfileNameResult | None:
     if not uid:
-        return ""
-    name = _NAME_CACHE.get(uid, "")
-    if name:
-        if not is_valid_profile_name(name):
+        return None
+    cached = _NAME_CACHE.get(uid)
+    if cached:
+        if not is_valid_profile_name(cached.name):
             _NAME_CACHE.pop(uid, None)
-            return ""
+            return None
+        if include_verified and not cached.verified_checked:
+            return None
         _NAME_CACHE.move_to_end(uid)
-    return name
+        return ProfileNameResult(
+            cached.name,
+            "uid_name_cache",
+            "cache_hit",
+            verified_label=cached.verified_label,
+        )
+    return None
 
 
-def _cache_put(uid: str, name: str) -> None:
+def _cache_put(
+    uid: str,
+    name: str,
+    verified_label: str = "",
+    verified_checked: bool = False,
+) -> None:
     if not uid or not name:
         return
-    _NAME_CACHE[uid] = name
+    _NAME_CACHE[uid] = CachedProfileName(
+        name=name,
+        verified_label=verified_label,
+        verified_checked=verified_checked,
+    )
     _NAME_CACHE.move_to_end(uid)
     while len(_NAME_CACHE) > MAX_NAME_CACHE_ITEMS:
         _NAME_CACHE.popitem(last=False)
