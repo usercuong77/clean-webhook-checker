@@ -3,8 +3,6 @@ from unittest.mock import patch
 
 from app_modules.api.controller import LatestPostRequest, checkpost_direct_input, latest_post_input
 from app_modules.features.latest_post import (
-    DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE,
-    DIRECT_CHECKPOST_PREFERRED_COOKIE_FINGERPRINT,
     FetchResult,
     analyze_latest_post_ownership,
     build_cookie_candidates,
@@ -23,10 +21,7 @@ from app_modules.resolvers.uid_resolver import ResolvedInput
 
 class Step6LatestPostTests(unittest.TestCase):
     def setUp(self):
-        DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE.clear()
-        import app_modules.features.latest_post as latest_post_module
-
-        latest_post_module.DIRECT_CHECKPOST_PREFERRED_COOKIE_FINGERPRINT = ""
+        pass
 
     def test_probe_urls_prefer_fast_public_desktop_urls(self):
         urls = build_facebook_latest_post_probe_urls("100000000000001", "test.user", with_cookie=False)
@@ -310,7 +305,7 @@ class Step6LatestPostTests(unittest.TestCase):
 
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
-    def test_checkpost_direct_skips_no_cookie_when_requires_cookie_cached(self, fetch_text, load_cookie_accounts):
+    def test_checkpost_direct_retries_no_cookie_without_requires_cookie_cache(self, fetch_text, load_cookie_accounts):
         load_cookie_accounts.return_value = [_cookie_account()]
         fetch_text.side_effect = [
             FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/test.user?sk=posts", "ok"),
@@ -324,6 +319,7 @@ class Step6LatestPostTests(unittest.TestCase):
                 "https://www.facebook.com/test.user?sk=posts",
                 "ok",
             ),
+            FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/test.user?sk=posts", "ok"),
             FetchResult(
                 200,
                 (
@@ -343,13 +339,15 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertTrue(second_payload["ok"])
         self.assertEqual(second_payload["method"], "direct_with_cookie")
         self.assertEqual(second_payload["content"], "Cached cookie latest post content")
-        self.assertEqual(fetch_text.call_count, 3)
+        self.assertEqual(fetch_text.call_count, 4)
         third_call_headers = fetch_text.call_args_list[2].args[1]
-        self.assertIn("Cookie", third_call_headers)
+        fourth_call_headers = fetch_text.call_args_list[3].args[1]
+        self.assertNotIn("Cookie", third_call_headers)
+        self.assertIn("Cookie", fourth_call_headers)
 
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
-    def test_checkpost_direct_prioritizes_last_working_cookie(self, fetch_text, load_cookie_accounts):
+    def test_checkpost_direct_keeps_cookie_order_without_working_cookie_cache(self, fetch_text, load_cookie_accounts):
         load_cookie_accounts.return_value = [
             _cookie_account("100000000000077"),
             _cookie_account("100000000000088"),
@@ -368,12 +366,13 @@ class Step6LatestPostTests(unittest.TestCase):
                 "https://www.facebook.com/test.user?sk=posts",
                 "ok",
             ),
+            FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/test.user?sk=posts", "ok"),
             FetchResult(
                 200,
                 (
                     '"post_id":"223456789012345"'
                     '"publish_time":1760000001'
-                    '"message":{"text":"Preferred cookie latest post content"}'
+                    '"message":{"text":"First cookie latest post content"}'
                 ),
                 "https://www.facebook.com/test.user?sk=posts",
                 "ok",
@@ -385,9 +384,9 @@ class Step6LatestPostTests(unittest.TestCase):
 
         self.assertTrue(first_payload["ok"])
         self.assertTrue(second_payload["ok"])
-        self.assertEqual(second_payload["content"], "Preferred cookie latest post content")
-        fifth_call_headers = fetch_text.call_args_list[4].args[1]
-        self.assertIn("c_user=100000000000088", fifth_call_headers["Cookie"])
+        self.assertEqual(second_payload["content"], "First cookie latest post content")
+        sixth_call_headers = fetch_text.call_args_list[5].args[1]
+        self.assertIn("c_user=100000000000077", sixth_call_headers["Cookie"])
 
 
 def _resolved(uid="", username="", resolver_name=""):

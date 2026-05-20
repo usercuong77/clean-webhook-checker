@@ -219,7 +219,7 @@ class Step5ProfileNameTests(unittest.TestCase):
 
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_text")
-    def test_cache_reuses_name_by_uid(self, fetch_text, load_accounts):
+    def test_profile_name_fetches_fresh_each_time(self, fetch_text, load_accounts):
         load_accounts.return_value = [_cookie_account()]
         fetch_text.return_value = _fetch_result(
             200,
@@ -234,7 +234,7 @@ class Step5ProfileNameTests(unittest.TestCase):
 
         self.assertEqual(first, "Kiều Anh")
         self.assertEqual(second, "Kiều Anh")
-        self.assertEqual(fetch_text.call_count, 1)
+        self.assertEqual(fetch_text.call_count, 2)
 
 
 def _cookie_account():
