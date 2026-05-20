@@ -201,6 +201,9 @@ def get_latest_post_direct_from_input(
     input_raw: Any,
     request_cookies: Mapping[str, Any] | None = None,
     request_cookie_pool: list[Mapping[str, Any]] | None = None,
+    owner_uid: str = "",
+    owner_name: str = "",
+    prefer_cookie: bool = False,
 ) -> dict[str, Any]:
     cleaned_input = sanitize_latest_post_input(input_raw)
     probe_urls = build_direct_latest_post_probe_urls(cleaned_input)
@@ -211,14 +214,15 @@ def get_latest_post_direct_from_input(
     best_failure: dict[str, Any] | None = None
     timeout = _request_timeout()
 
-    direct_uid = extract_direct_uid_from_facebook_url(cleaned_input)
+    expected_owner_uid = normalize_uid(owner_uid)
+    direct_uid = expected_owner_uid or extract_direct_uid_from_facebook_url(cleaned_input)
     direct_username = extract_profile_username_from_url(cleaned_input)
     cache_key = _direct_checkpost_cache_key(cleaned_input, direct_uid, direct_username)
     cookie_candidates = _prioritize_direct_cookie_candidates(
         [candidate for candidate in build_cookie_candidates(request_cookies, request_cookie_pool) if candidate.has_cookie]
     )
     direct_candidates: list[CookieCandidate] = []
-    if not cookie_candidates or not _direct_checkpost_requires_cookie(cache_key):
+    if not prefer_cookie and (not cookie_candidates or not _direct_checkpost_requires_cookie(cache_key)):
         direct_candidates.append(CookieCandidate("no_cookie", {}))
     direct_candidates.extend(cookie_candidates)
 
@@ -234,6 +238,22 @@ def get_latest_post_direct_from_input(
                 attempt = _attempt_record(url, fetch, candidate, header_label)
 
                 if has_post and has_evidence and http_success:
+                    ownership = analyze_latest_post_ownership(fetch.text, parsed["postId"], expected_owner_uid)
+                    if ownership["isTaggedOrSharedByOther"]:
+                        fail_reason = "tagged_post_actor_mismatch"
+                        attempt["reason"] = fail_reason
+                        attempt["ownerUid"] = ownership["ownerUid"]
+                        attempt["actorUid"] = ownership["actorUid"]
+                        attempt["actorName"] = ownership["actorName"]
+                        attempt["taggedPostSkipped"] = True
+                        attempts.append(attempt)
+                        best_failure = choose_better_latest_post_result(best_failure, attempt)
+                        _remember_direct_checkpost_requires_cookie(cache_key)
+                        if not candidate.has_cookie:
+                            attempt["fastFallbackToCookie"] = True
+                        move_to_next_candidate = True
+                        break
+
                     content = extract_latest_post_content_from_html(fetch.text, parsed["postId"])
                     if not candidate.has_cookie and not is_trusted_no_cookie_latest_post(parsed, content):
                         attempt["reason"] = f"latest_post_no_cookie_untrusted_http_{fetch.http_code or 0}"
@@ -255,7 +275,7 @@ def get_latest_post_direct_from_input(
                         "ok": True,
                         "uid": direct_uid,
                         "username": direct_username,
-                        "name": "",
+                        "name": str(owner_name or ""),
                         "postId": parsed["postId"],
                         "timestamp": parsed["timestamp"],
                         "link": post_link,
@@ -271,6 +291,9 @@ def get_latest_post_direct_from_input(
                         "cookieFallbackUsed": candidate.has_cookie,
                         "probeAttempts": attempts,
                         "directInput": cleaned_input,
+                        "ownerUid": ownership["ownerUid"],
+                        "actorUid": ownership["actorUid"],
+                        "actorName": ownership["actorName"],
                     }
 
                 fail_reason = build_latest_post_failure_reason(fetch.text, fetch.final_url, fetch.http_code)
@@ -292,6 +315,14 @@ def get_latest_post_direct_from_input(
     failure["name"] = ""
     failure["source"] = "direct_link_scrape"
     failure["directInput"] = cleaned_input
+    tagged_attempt = next((attempt for attempt in attempts if attempt.get("taggedPostSkipped")), None)
+    if tagged_attempt:
+        failure["taggedPostSkipped"] = True
+        failure["needsOwnerResolve"] = True
+        failure["ownerUid"] = str(tagged_attempt.get("ownerUid") or direct_uid or "")
+        failure["actorUid"] = str(tagged_attempt.get("actorUid") or "")
+        failure["actorName"] = str(tagged_attempt.get("actorName") or "")
+        failure["reason"] = "tagged_post_skipped_no_owner_post_found"
     return failure
 
 
@@ -354,6 +385,76 @@ def extract_direct_uid_from_facebook_url(input_raw: Any) -> str:
         return normalize_uid(values[0] if values else "")
     first_segment = parsed.path.strip("/").split("/", 1)[0]
     return normalize_uid(first_segment)
+
+
+def analyze_latest_post_ownership(html_raw: Any, post_id_raw: Any, expected_owner_uid_raw: Any = "") -> dict[str, Any]:
+    html = normalize_facebook_payload_text(html_raw)
+    post_id = str(post_id_raw or "").strip()
+    owner_uid = normalize_uid(expected_owner_uid_raw) or extract_profile_owner_uid_from_html(html)
+    actor = extract_post_actor_from_html(html, post_id)
+    actor_uid = normalize_uid(actor.get("uid", ""))
+    is_mismatch = bool(owner_uid and actor_uid and actor_uid != owner_uid)
+    return {
+        "ownerUid": owner_uid,
+        "actorUid": actor_uid,
+        "actorName": actor.get("name", ""),
+        "isTaggedOrSharedByOther": is_mismatch,
+    }
+
+
+def extract_profile_owner_uid_from_html(html_raw: Any) -> str:
+    html = normalize_facebook_payload_text(html_raw)
+    if not html:
+        return ""
+    patterns = [
+        r'fb://profile/(\d{5,20})',
+        r'"user"\s*:\s*\{\s*"id"\s*:\s*"(\d{5,20})"\s*,\s*"timeline_list_feed_units"',
+        r'"selectedID"\s*:\s*"(\d{5,20})"',
+        r'"userID"\s*:\s*"(\d{5,20})"',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html, flags=re.IGNORECASE)
+        if match:
+            uid = normalize_uid(match.group(1))
+            if uid:
+                return uid
+    return ""
+
+
+def extract_post_actor_from_html(html_raw: Any, post_id_raw: Any) -> dict[str, str]:
+    html = normalize_facebook_payload_text(html_raw)
+    post_id = str(post_id_raw or "").strip()
+    if not html or not post_id:
+        return {"uid": "", "name": ""}
+
+    windows: list[str] = []
+    for match in re.finditer(re.escape(post_id), html, flags=re.IGNORECASE):
+        start = max(0, match.start() - 1200)
+        end = min(len(html), match.end() + 9000)
+        windows.append(html[start:end])
+        if len(windows) >= 4:
+            break
+
+    actor_patterns = [
+        r'"actors"\s*:\s*\[\s*\{\s*"__typename"\s*:\s*"User"\s*,\s*"name"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"id"\s*:\s*"(\d{5,20})"',
+        r'"actors"\s*:\s*\[\s*\{\s*"__typename"\s*:\s*"User"[^{}]{0,800}?"id"\s*:\s*"(\d{5,20})"[^{}]{0,800}?"name"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r'"owning_profile"\s*:\s*\{[^{}]{0,800}?"id"\s*:\s*"(\d{5,20})"[^{}]{0,800}?"name"\s*:\s*"((?:\\.|[^"\\])*)"',
+    ]
+    for window in windows:
+        for pattern in actor_patterns:
+            match = re.search(pattern, window, flags=re.IGNORECASE)
+            if not match:
+                continue
+            first, second = match.group(1), match.group(2)
+            if normalize_uid(first):
+                uid, name = first, second
+            else:
+                uid, name = second, first
+            return {
+                "uid": normalize_uid(uid),
+                "name": clean_facebook_post_content(decode_facebook_json_text(name)),
+            }
+    return {"uid": "", "name": ""}
 
 
 def build_direct_latest_post_link(input_raw: Any, post_id_raw: Any, uid: str = "", username: str = "") -> str:

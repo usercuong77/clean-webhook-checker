@@ -181,6 +181,32 @@ def checkpost_direct_input(req: LatestPostRequest) -> dict[str, Any]:
         request_cookies=req.cookies,
         request_cookie_pool=req.cookiesPool or req.cookies_pool,
     )
+    if result.get("taggedPostSkipped") or result.get("needsOwnerResolve"):
+        resolved = resolve_input(cleaned_input)
+        owner_uid = str(getattr(resolved, "uid", "") or result.get("ownerUid") or "").strip()
+        owner_name = str(getattr(resolved, "resolver_name", "") or "").strip()
+        if owner_uid:
+            retry = get_latest_post_direct_from_input(
+                cleaned_input,
+                request_cookies=req.cookies,
+                request_cookie_pool=req.cookiesPool or req.cookies_pool,
+                owner_uid=owner_uid,
+                owner_name=owner_name,
+                prefer_cookie=True,
+            )
+            retry["uid"] = owner_uid
+            retry["name"] = owner_name
+            retry["username"] = str(getattr(resolved, "username", "") or retry.get("username") or result.get("username") or "")
+            retry["canonicalUrl"] = str(getattr(resolved, "canonical_url", "") or cleaned_input)
+            retry["ownerResolveSource"] = str(getattr(resolved, "source", "") or "")
+            retry["ownerResolveReason"] = str(getattr(resolved, "reason", "") or "")
+            retry["ownerResolvedByTds"] = str(getattr(resolved, "source", "") or "") == "tds_uid_api"
+            retry["skippedTaggedPost"] = True
+            retry["elapsedMs"] = int((perf_counter() - started) * 1000)
+            retry["input"] = cleaned_input
+            return retry
+        result["ownerResolveSource"] = str(getattr(resolved, "source", "") or "")
+        result["ownerResolveReason"] = str(getattr(resolved, "reason", "") or "")
     result["elapsedMs"] = int((perf_counter() - started) * 1000)
     result["input"] = cleaned_input
     result["canonicalUrl"] = cleaned_input
