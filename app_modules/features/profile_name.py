@@ -57,6 +57,18 @@ PROFILE_NAME_BLOCKLIST = [
     "temporarily unavailable",
     "security check",
     "checkpoint",
+    "tin nhắn",
+    "messenger",
+    "messages",
+    "message requests",
+    "thông báo",
+    "notifications",
+    "friend requests",
+    "lời mời kết bạn",
+    "bảng feed",
+    "news feed",
+    "trang chủ",
+    "home",
 ]
 
 LETTER_RE = re.compile(r"[A-Za-zÀ-ỹ]")
@@ -268,6 +280,18 @@ def is_valid_profile_name(raw_name: str) -> bool:
     low = name.lower()
     if any(str(item).lower() in low for item in PROFILE_NAME_BLOCKLIST):
         return False
+    if re.fullmatch(r"[A-Za-zÀ-ỹ\s]+(?:\(\d+\))?", name):
+        ui_labels = {
+            "tin nhắn",
+            "messenger",
+            "messages",
+            "thông báo",
+            "notifications",
+            "trang chủ",
+            "home",
+        }
+        if re.sub(r"\s*\(\d+\)\s*$", "", low).strip() in ui_labels:
+            return False
 
     return bool(LETTER_RE.search(name))
 
@@ -452,6 +476,9 @@ def _cache_get(uid: str) -> str:
         return ""
     name = _NAME_CACHE.get(uid, "")
     if name:
+        if not is_valid_profile_name(name):
+            _NAME_CACHE.pop(uid, None)
+            return ""
         _NAME_CACHE.move_to_end(uid)
     return name
 

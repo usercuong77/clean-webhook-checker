@@ -43,7 +43,19 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertFalse(is_valid_profile_name("Trình duyệt này không được hỗ trợ"))
         self.assertFalse(is_valid_profile_name("This browser isn't supported"))
         self.assertFalse(is_valid_profile_name("Đăng nhập hoặc đăng ký để xem"))
+        self.assertFalse(is_valid_profile_name("Tin nhắn (1)"))
+        self.assertFalse(is_valid_profile_name("Messages (1)"))
         self.assertFalse(is_valid_profile_name("123456789"))
+
+    def test_extract_profile_name_skips_facebook_ui_labels(self):
+        html = """
+        <html>
+          <head><title>Tin nhắn (1)</title></head>
+          <body><h1>Độ Phùng Verified account</h1></body>
+        </html>
+        """
+
+        self.assertEqual(extract_profile_name(html), "Độ Phùng Verified account")
 
     def test_builds_username_and_uid_urls(self):
         resolved = _resolved(uid="100000000000001", username="test.user")
