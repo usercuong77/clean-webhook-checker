@@ -88,7 +88,7 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
         resolved,
         live_die,
         include_name=bool(req.includeName) and _profile_name_lookup_enabled(),
-    )
+    ) or str(getattr(resolved, "resolver_name", "") or "").strip()
     elapsed_ms = int((perf_counter() - started) * 1000)
 
     return {
@@ -109,6 +109,10 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
 
 
 def check_name_input(req: CheckRequest) -> dict[str, Any]:
+    return check_tick_input(req)
+
+
+def check_tick_input(req: CheckRequest) -> dict[str, Any]:
     started = perf_counter()
     raw_input = (req.input or "").strip()
     resolved = resolve_input(raw_input)
@@ -121,6 +125,7 @@ def check_name_input(req: CheckRequest) -> dict[str, Any]:
         name_result = None
         name = ""
 
+    verified_label = _verified_account_label(name)
     elapsed_ms = int((perf_counter() - started) * 1000)
     return {
         "ok": True,
@@ -129,9 +134,13 @@ def check_name_input(req: CheckRequest) -> dict[str, Any]:
         "uid": resolved.uid,
         "username": resolved.username,
         "name": name,
+        "displayName": _display_profile_name(name),
+        "verified": bool(verified_label),
+        "isVerified": bool(verified_label),
+        "verifiedLabel": verified_label,
         "canonicalUrl": resolved.canonical_url,
         "source": name_result.source if name_result else live_die.source,
-        "reason": name_result.reason if name_result else f"checkname_skipped:{live_die.reason}",
+        "reason": name_result.reason if name_result else f"checktick_skipped:{live_die.reason}",
         "httpCode": live_die.http_code,
         "elapsedMs": elapsed_ms,
         "probes": live_die.probes,
@@ -158,8 +167,29 @@ def latest_post_input(req: LatestPostRequest) -> dict[str, Any]:
     )
     result["elapsedMs"] = int((perf_counter() - started) * 1000)
     result["username"] = resolved.username
+    result["name"] = str(getattr(resolved, "resolver_name", "") or "").strip()
     result["canonicalUrl"] = resolved.canonical_url
     return result
+
+
+def _verified_account_label(name: str) -> str:
+    value = str(name or "").strip()
+    low = value.lower()
+    if "tài khoản đã xác minh" in low:
+        return "Tài khoản đã xác minh"
+    if "tài khoản đã xác minh" in low:
+        return "Tài khoản đã xác minh"
+    if "verified account" in low:
+        return "Verified account"
+    return ""
+
+
+def _display_profile_name(name: str) -> str:
+    value = str(name or "").strip()
+    value = value.replace("Tài khoản đã xác minh", "").replace("Verified account", "").strip()
+    for marker in ("Tài khoản đã xác minh", "Verified account"):
+        value = value.replace(marker, "").strip()
+    return value
 
 
 def viplike_packages_input(refresh: bool = False, include_raw: bool = False) -> dict[str, Any]:
@@ -205,6 +235,7 @@ def _resolver_debug_summary(resolved) -> dict[str, Any]:
         "reason": getattr(resolved, "reason", ""),
         "uid": getattr(resolved, "uid", ""),
         "username": getattr(resolved, "username", ""),
+        "name": getattr(resolved, "resolver_name", ""),
         "canonicalUrl": getattr(resolved, "canonical_url", ""),
         "needsNetworkResolve": bool(getattr(resolved, "needs_network_resolve", False)),
         "probeCount": len(probes),

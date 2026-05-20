@@ -131,19 +131,14 @@ def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
 
     urls = build_profile_name_urls(resolved)
     if not urls:
+        resolver_name = str(getattr(resolved, "resolver_name", "") or "").strip()
+        if resolver_name and is_valid_profile_name(resolver_name):
+            _cache_put(uid, resolver_name)
+            return ProfileNameResult(resolver_name, "resolver_name", "name_found_resolver")
         return ProfileNameResult("", "profile_name", "no_profile_urls")
 
     timeout = max(4.0, min(get_config().request_timeout_seconds, 8.0))
     probes: list[dict[str, Any]] = []
-
-    for url in urls:
-        fetch = _fetch_text(url, _public_headers(), timeout)
-        name = extract_profile_name(fetch.text)
-        probe = _probe_record("profile_name_public", url, fetch, name)
-        probes.append(probe)
-        if name:
-            _cache_put(uid, name)
-            return ProfileNameResult(name, "profile_name_public", "name_found_public", probes)
 
     cookie_limit = _cookie_account_limit()
     for account in load_cookie_accounts()[:cookie_limit]:
@@ -177,6 +172,11 @@ def resolve_profile_name(resolved: ResolvedInput) -> ProfileNameResult:
             if name:
                 _cache_put(uid, name)
                 return ProfileNameResult(name, "profile_name_cookie", "name_found_cookie", probes)
+
+    resolver_name = str(getattr(resolved, "resolver_name", "") or "").strip()
+    if resolver_name and is_valid_profile_name(resolver_name):
+        _cache_put(uid, resolver_name)
+        return ProfileNameResult(resolver_name, "resolver_name", "name_found_resolver", probes)
 
     return ProfileNameResult("", "profile_name", "name_not_found", probes)
 

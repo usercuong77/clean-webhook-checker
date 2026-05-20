@@ -8,6 +8,7 @@ from app_modules.api.controller import (
     VipLikeOrderRequest,
     check_input,
     check_name_input,
+    check_tick_input,
     health_payload,
     latest_post_input,
     realtime_check_bulk,
@@ -41,7 +42,7 @@ def root() -> dict:
             "features": [
                 "/webhook/telegram",
                 "/check",
-                "/checkname",
+                "/checktick",
                 "/latest-post",
                 "/checkpost",
                 "/realtime/check-bulk",
@@ -65,6 +66,13 @@ def check(req: CheckRequest, x_api_key: str | None = Header(default=None)) -> di
 def check_name(req: CheckRequest, x_api_key: str | None = Header(default=None)) -> dict:
     require_api_key(x_api_key)
     return check_name_input(req)
+
+
+@app.post("/checktick")
+@app.post("/check-tick")
+def check_tick(req: CheckRequest, x_api_key: str | None = Header(default=None)) -> dict:
+    require_api_key(x_api_key)
+    return check_tick_input(req)
 
 
 @app.post("/latest-post")

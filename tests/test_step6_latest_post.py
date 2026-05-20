@@ -88,7 +88,7 @@ class Step6LatestPostTests(unittest.TestCase):
     @patch("app_modules.api.controller.resolve_input")
     def test_latest_post_response_shape(self, resolve_input, fetch_text, load_cookie_accounts):
         uid = "100000000000001"
-        resolve_input.return_value = _resolved(uid=uid, username="test.user")
+        resolve_input.return_value = _resolved(uid=uid, username="test.user", resolver_name="TDS Name")
         fetch_text.return_value = FetchResult(
             200,
             (
@@ -104,13 +104,14 @@ class Step6LatestPostTests(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["uid"], uid)
+        self.assertEqual(payload["name"], "TDS Name")
         self.assertEqual(payload["postId"], "123456789012345")
         self.assertEqual(payload["content"], "Latest post content")
         self.assertEqual(payload["method"], "no_cookie")
         self.assertIn("elapsedMs", payload)
 
 
-def _resolved(uid="", username=""):
+def _resolved(uid="", username="", resolver_name=""):
     return ResolvedInput(
         input=username or uid,
         uid=uid,
@@ -118,6 +119,7 @@ def _resolved(uid="", username=""):
         canonical_url=f"https://www.facebook.com/profile.php?id={uid}" if uid else "",
         source="test",
         reason="test",
+        resolver_name=resolver_name,
     )
 
 

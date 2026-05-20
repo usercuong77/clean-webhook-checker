@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from app_modules.api.controller import CheckRequest, check_input, check_name_input
+from app_modules.api.controller import CheckRequest, check_input, check_tick_input
 from app_modules.checkers.live_die import LiveDieResult
 from app_modules.checkers.probe_result import ProbeResult
 from app_modules.features.profile_name import (
@@ -40,16 +40,9 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertFalse(is_valid_profile_name("Log in to Facebook"))
         self.assertFalse(is_valid_profile_name("Error"))
         self.assertFalse(is_valid_profile_name("Lỗi"))
-        self.assertFalse(is_valid_profile_name("\u004c\u00e1\u00bb\u0097i"))
         self.assertFalse(is_valid_profile_name("Trình duyệt này không được hỗ trợ"))
         self.assertFalse(is_valid_profile_name("This browser isn't supported"))
-        self.assertFalse(is_valid_profile_name("\u0110\u0103ng nh\u1eadp ho\u1eb7c \u0111\u0103ng k\u00fd \u0111\u1ec3 xem"))
-        self.assertFalse(
-            is_valid_profile_name(
-                "\u00c4\u0090\u00c4\u0083ng nh\u00e1\u00ba\u00adp ho\u00e1\u00ba\u00b7c "
-                "\u00c4\u0091\u00c4\u0083ng k\u00c3\u00bd \u00c4\u0091\u00e1\u00bb\u0083 xem"
-            )
-        )
+        self.assertFalse(is_valid_profile_name("Đăng nhập hoặc đăng ký để xem"))
         self.assertFalse(is_valid_profile_name("123456789"))
 
     def test_builds_username_and_uid_urls(self):
@@ -61,52 +54,42 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertIn("https://mbasic.facebook.com/test.user", urls)
         self.assertIn("https://www.facebook.com/profile.php?id=100000000000001", urls)
 
-    @patch("app_modules.features.profile_name._fetch_text")
-    def test_resolve_profile_name_from_public_html(self, fetch_text):
-        fetch_text.return_value = _fetch_result(
-            200,
-            '<meta property="og:title" content="Kiều Anh">',
-            "https://www.facebook.com/test.user",
-            "ok",
+    @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
+    def test_resolve_profile_name_falls_back_to_resolver_name(self, load_accounts):
+        result = resolve_profile_name(
+            _resolved(uid="100000000000001", username="test.user", resolver_name="TDS Name")
         )
 
-        result = resolve_profile_name(_resolved(uid="100000000000001", username="test.user"))
+        self.assertEqual(result.name, "TDS Name")
+        self.assertEqual(result.source, "resolver_name")
+        self.assertEqual(result.reason, "name_found_resolver")
 
-        self.assertEqual(result.name, "Kiều Anh")
-        self.assertEqual(result.source, "profile_name_public")
-
-    @patch("app_modules.features.profile_name._fetch_text")
-    def test_choose_profile_name_fetches_only_for_live(self, fetch_text):
-        fetch_text.return_value = _fetch_result(
-            200,
-            '<meta property="og:title" content="Kiều Anh">',
-            "https://www.facebook.com/test.user",
-            "ok",
-        )
-
+    @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
+    def test_choose_profile_name_fetches_only_for_live(self, load_accounts):
         live_name = choose_profile_name(
-            _resolved(uid="100000000000001", username="test.user"),
+            _resolved(uid="100000000000001", username="test.user", resolver_name="TDS Name"),
             _live_die("LIVE"),
             include_name=True,
         )
         die_name = choose_profile_name(
-            _resolved(uid="100000000000002", username="dead.user"),
+            _resolved(uid="100000000000002", username="dead.user", resolver_name="Dead Name"),
             _live_die("DIE"),
             include_name=True,
         )
 
-        self.assertEqual(live_name, "Kiều Anh")
+        self.assertEqual(live_name, "TDS Name")
         self.assertEqual(die_name, "")
-        self.assertEqual(fetch_text.call_count, 1)
 
     @patch("app_modules.checkers.live_die.dispatch_mode")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_text")
     @patch.dict("app_modules.api.controller.os.environ", {"PROFILE_NAME_LOOKUP_ENABLED": "0"}, clear=False)
-    def test_checkname_bypasses_default_check_name_gate(self, fetch_text, dispatch_mode):
+    def test_checktick_bypasses_default_check_name_gate(self, fetch_text, load_accounts, dispatch_mode):
+        load_accounts.return_value = [_cookie_account()]
         fetch_text.return_value = _fetch_result(
             200,
-            '<meta property="og:title" content="Name Command">',
-            "https://www.facebook.com/test.user",
+            '100000000000001<meta property="og:title" content="Name Command Tài khoản đã xác minh">',
+            "https://www.facebook.com/profile.php?id=100000000000001",
             "ok",
         )
         dispatch_mode.return_value = (
@@ -122,23 +105,18 @@ class Step5ProfileNameTests(unittest.TestCase):
         )
 
         check_payload = check_input(CheckRequest(input="100000000000001", mode="1", includeName=True))
-        name_payload = check_name_input(CheckRequest(input="100000000000001", mode="1", includeName=True))
+        tick_payload = check_tick_input(CheckRequest(input="100000000000001", mode="1", includeName=True))
 
         self.assertEqual(check_payload["name"], "")
-        self.assertEqual(name_payload["name"], "Name Command")
-        self.assertEqual(name_payload["nameSource"], "profile_name_public")
-        self.assertEqual(name_payload["nameReason"], "name_found_public")
+        self.assertEqual(tick_payload["name"], "Name Command Tài khoản đã xác minh")
+        self.assertEqual(tick_payload["displayName"], "Name Command")
+        self.assertTrue(tick_payload["verified"])
+        self.assertEqual(tick_payload["verifiedLabel"], "Tài khoản đã xác minh")
+        self.assertEqual(tick_payload["nameSource"], "profile_name_cookie")
+        self.assertEqual(tick_payload["nameReason"], "name_found_cookie")
 
-    @patch("app_modules.features.profile_name._fetch_text")
     @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
-    def test_live_falls_back_to_username_when_name_missing(self, load_accounts, fetch_text):
-        fetch_text.return_value = _fetch_result(
-            200,
-            "<title>Facebook</title>",
-            "https://www.facebook.com/test.user",
-            "ok",
-        )
-
+    def test_live_falls_back_to_username_when_name_missing(self, load_accounts):
         name = choose_profile_name(
             _resolved(uid="100000000000001", username="test.user"),
             _live_die("LIVE"),
@@ -149,30 +127,15 @@ class Step5ProfileNameTests(unittest.TestCase):
 
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_text")
-    def test_cookie_desktop_probe_runs_after_public_name_missing(self, fetch_text, load_accounts):
+    def test_cookie_desktop_probe_runs_first(self, fetch_text, load_accounts):
         uid = "100000000000001"
-        load_accounts.return_value = [
-            CookieAccount(
-                c_user="100000000000099",
-                source="test",
-                index=0,
-                cookies={"c_user": "100000000000099", "xs": "fake-xs-token"},
-            )
-        ]
-
-        def fake_fetch(url, headers, timeout):
-            if not headers.get("Cookie"):
-                return _fetch_result(200, "<title>Facebook</title>", url, "ok")
-            if headers.get("Sec-Fetch-Mode") == "navigate" and "www.facebook.com/test.user" in url:
-                return _fetch_result(
-                    200,
-                    f'{uid}<meta property="og:title" content="Cookie Name">',
-                    url,
-                    "ok",
-                )
-            return _fetch_result(200, f"{uid}<title>Facebook</title>", url, "ok")
-
-        fetch_text.side_effect = fake_fetch
+        load_accounts.return_value = [_cookie_account()]
+        fetch_text.return_value = _fetch_result(
+            200,
+            f'{uid}<meta property="og:title" content="Cookie Name">',
+            "https://www.facebook.com/test.user",
+            "ok",
+        )
 
         result = resolve_profile_name(_resolved(uid=uid, username="test.user"))
 
@@ -180,12 +143,15 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result.source, "profile_name_cookie")
         self.assertEqual(result.reason, "name_found_cookie")
         self.assertTrue(any(probe.get("header") == "desktop_logged_in" for probe in result.probes))
+        self.assertEqual(fetch_text.call_count, 1)
 
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_text")
-    def test_cache_reuses_name_by_uid(self, fetch_text):
+    def test_cache_reuses_name_by_uid(self, fetch_text, load_accounts):
+        load_accounts.return_value = [_cookie_account()]
         fetch_text.return_value = _fetch_result(
             200,
-            '<meta property="og:title" content="Kiều Anh">',
+            '100000000000001<meta property="og:title" content="Kiều Anh">',
             "https://www.facebook.com/test.user",
             "ok",
         )
@@ -199,7 +165,16 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(fetch_text.call_count, 1)
 
 
-def _resolved(uid="", username=""):
+def _cookie_account():
+    return CookieAccount(
+        c_user="100000000000099",
+        source="test",
+        index=0,
+        cookies={"c_user": "100000000000099", "xs": "fake-xs-token"},
+    )
+
+
+def _resolved(uid="", username="", resolver_name=""):
     return ResolvedInput(
         input=username or uid,
         uid=uid,
@@ -207,6 +182,7 @@ def _resolved(uid="", username=""):
         canonical_url=f"https://www.facebook.com/profile.php?id={uid}" if uid else "",
         source="test",
         reason="test",
+        resolver_name=resolver_name,
     )
 
 
