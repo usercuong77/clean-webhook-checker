@@ -326,7 +326,7 @@ class Step42UidResolverTests(unittest.TestCase):
         )
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_controller_resolves_username_uid_before_mode_probe(self, fetch_text):
+    def test_controller_treats_resolved_username_uid_as_live_without_mode_probe(self, fetch_text):
         calls = []
 
         def fake_probe(uid):
@@ -366,10 +366,12 @@ class Step42UidResolverTests(unittest.TestCase):
 
         self.assertEqual(payload["uid"], "100000000000001")
         self.assertEqual(payload["status"], "LIVE")
-        self.assertEqual(calls, ["100000000000001"])
+        self.assertEqual(payload["source"], "uid_html_probe")
+        self.assertEqual(payload["reason"], "uid_resolved_treated_as_live:uid_found_in_html")
+        self.assertEqual(calls, [])
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
-    def test_controller_keeps_mode1_silhouette_live_when_uid_is_resolved(self, fetch_text):
+    def test_controller_treats_known_username_uid_as_live_without_mode_probe(self, fetch_text):
         def fake_fetch(url, headers, timeout):
             if "profile.php?id=61560438496711" in url:
                 return FetchResult(
@@ -416,7 +418,8 @@ class Step42UidResolverTests(unittest.TestCase):
         self.assertEqual(payload["uid"], "61560438496711")
         self.assertEqual(payload["status"], "LIVE")
         self.assertEqual(payload["confidence"], "strong")
-        self.assertEqual(payload["reason"], "graph_profile_picture_dimensions")
+        self.assertEqual(payload["source"], "uid_known_map")
+        self.assertEqual(payload["reason"], "uid_resolved_treated_as_live:uid_found_in_known_map")
 
 
 def _uid_fetcher(url, headers, timeout):

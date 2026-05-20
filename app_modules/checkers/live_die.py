@@ -8,6 +8,9 @@ from app_modules.checkers.probe_result import ProbeResult
 from app_modules.resolvers.uid_resolver import ResolvedInput
 
 
+DIRECT_UID_SOURCES = {"direct_uid", "profile_php", "people_url", "numeric_path"}
+
+
 @dataclass(frozen=True)
 class LiveDieResult:
     status: str
@@ -32,9 +35,8 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
         )
 
     if not resolved.uid and not resolved.username:
-        status = "UNKNOWN" if _uid_failure_is_unknown(resolved.reason) else "DIE"
         return LiveDieResult(
-            status=status,
+            status="DIE",
             confidence="weak",
             source=resolved.source,
             reason=resolved.reason or "input_not_resolved",
@@ -42,7 +44,7 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
             probes=[
                 {
                     "source": resolved.source,
-                    "status": status,
+                    "status": "DIE",
                     "reason": resolved.reason or "input_not_resolved",
                     "requestedMode": normalized_mode,
                 }
@@ -62,13 +64,27 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
     }
 
     if not resolved.uid:
-        status = "UNKNOWN" if _uid_failure_is_unknown(resolved.reason) else "DIE"
         return LiveDieResult(
-            status=status,
+            status="DIE",
             confidence="weak",
             source=resolved.source,
             reason=resolved.reason or "uid_not_resolved",
             http_code=0,
+            probes=[resolver_probe],
+        )
+
+    if _resolved_uid_is_network_verified(resolved):
+        reason = _network_verified_live_reason(resolved.reason)
+        resolver_probe["status"] = "LIVE"
+        resolver_probe["confidence"] = "strong"
+        resolver_probe["reason"] = reason
+        resolver_probe["mode"] = "uid_resolver"
+        return LiveDieResult(
+            status="LIVE",
+            confidence="strong",
+            source=resolved.source or "uid_resolver",
+            reason=reason,
+            http_code=_resolver_http_code(resolved),
             probes=[resolver_probe],
         )
 
@@ -78,11 +94,25 @@ def check_live_die(resolved: ResolvedInput, mode: str | None = "all") -> LiveDie
     return _from_probe_result(probe, reason, [resolver_probe], executed_mode, requested_mode)
 
 
-def _uid_failure_is_unknown(reason: str) -> bool:
-    return str(reason or "") in {
-        "tds_rate_limited",
-        "tds_api_unavailable_after_deadline",
-    }
+def _resolved_uid_is_network_verified(resolved: ResolvedInput) -> bool:
+    source = str(resolved.source or "")
+    return bool(resolved.uid and source not in DIRECT_UID_SOURCES)
+
+
+def _network_verified_live_reason(reason: str) -> str:
+    detail = str(reason or "uid_resolved").strip()
+    return f"uid_resolved_treated_as_live:{detail}"
+
+
+def _resolver_http_code(resolved: ResolvedInput) -> int:
+    for probe in resolved.resolver_probes or []:
+        try:
+            http_code = int(probe.get("httpCode") or 0)
+        except (TypeError, ValueError):
+            http_code = 0
+        if http_code:
+            return http_code
+    return 0
 
 
 def _from_probe_result(

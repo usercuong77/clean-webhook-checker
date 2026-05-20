@@ -84,6 +84,27 @@ class Step45TdsUidResolverTests(unittest.TestCase):
         self.assertEqual(result.reason, "uid_found_tds_api")
         self.assertEqual(fetch_text.call_count, 0)
 
+    @patch("app_modules.checkers.live_die.dispatch_mode")
+    @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
+    def test_check_tds_uid_returns_live_without_mode_probe(self, tds_api, dispatch_mode):
+        tds_api.return_value = Mock(
+            uid="534838088",
+            name="Luan Nguyen",
+            source="tds_uid_api",
+            reason="uid_found_tds_api",
+            http_code=200,
+        )
+
+        payload = check_input(CheckRequest(input="https://www.facebook.com/luanboy92/", mode="1", includeName=False))
+
+        self.assertEqual(payload["status"], "LIVE")
+        self.assertEqual(payload["confidence"], "strong")
+        self.assertEqual(payload["uid"], "534838088")
+        self.assertEqual(payload["source"], "tds_uid_api")
+        self.assertEqual(payload["reason"], "uid_resolved_treated_as_live:uid_found_tds_api")
+        self.assertEqual(payload["httpCode"], 200)
+        self.assertEqual(dispatch_mode.call_count, 0)
+
     @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
@@ -167,7 +188,7 @@ class Step45TdsUidResolverTests(unittest.TestCase):
 
         payload = check_input(CheckRequest(input="https://www.facebook.com/rate-limited", mode="1", includeName=True))
 
-        self.assertEqual(payload["status"], "UNKNOWN")
+        self.assertEqual(payload["status"], "DIE")
         self.assertEqual(payload["source"], "tds_uid_api")
         self.assertEqual(payload["reason"], "tds_rate_limited")
         self.assertEqual(fetch_text.call_count, 0)
