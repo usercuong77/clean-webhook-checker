@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass
 from time import perf_counter
@@ -15,6 +16,8 @@ from app_modules.core.config import get_config
 DEFAULT_SMM_API_BASE_URL = "https://api.baostar.pro/api/v2"
 DEFAULT_FACEBOOK_LIKE_ENDPOINT = "/api/facebook-like-gia-re/buy"
 DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS = 6.0
+DEFAULT_SMM_PACKAGE_REFRESH_TIMEOUT_SECONDS = 25.0
+MAX_SMM_PACKAGE_REFRESH_TIMEOUT_SECONDS = 45.0
 VALID_REACTIONS = ("like", "love", "care", "haha", "wow", "sad", "angry")
 CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES = (
     "facebook_like",
@@ -62,7 +65,7 @@ def get_viplike_packages(refresh: bool = False, include_raw: bool = False) -> di
     source = ""
 
     if api_configured:
-        api_result = call_smm_api("GET", "/api/prices", timeout_seconds=smm_package_timeout_seconds())
+        api_result = call_smm_api("GET", "/api/prices", timeout_seconds=smm_package_timeout_seconds(refresh=refresh))
         if api_result.ok and isinstance(api_result.json, Mapping):
             rows = build_smm_package_rows(api_result.json)
             packages = normalize_viplike_package_rows(rows)
@@ -288,9 +291,24 @@ def call_smm_api(
     return last_result or SmmApiResult(False, 0, "", None, "", "smm_api_failed", 0)
 
 
-def smm_package_timeout_seconds() -> float:
+def smm_package_timeout_seconds(refresh: bool = False) -> float:
     config = get_config()
-    return max(1.0, min(float(config.smm_api_timeout_seconds or DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS), DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS))
+    if refresh:
+        configured = (
+            env_float("SMM_PACKAGE_REFRESH_TIMEOUT_SEC")
+            or env_float("VIPLIKE_PACKAGE_REFRESH_TIMEOUT_SEC")
+            or max(float(config.smm_api_timeout_seconds or 0), DEFAULT_SMM_PACKAGE_REFRESH_TIMEOUT_SECONDS)
+        )
+        return max(DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS, min(configured, MAX_SMM_PACKAGE_REFRESH_TIMEOUT_SECONDS))
+    configured = env_float("SMM_PACKAGE_TIMEOUT_SEC") or float(config.smm_api_timeout_seconds or DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS)
+    return max(1.0, min(configured, DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS))
+
+
+def env_float(name: str) -> float:
+    try:
+        return float(os.getenv(name, "0") or "0")
+    except ValueError:
+        return 0.0
 
 
 def build_smm_request_urls(endpoint: str) -> list[str]:

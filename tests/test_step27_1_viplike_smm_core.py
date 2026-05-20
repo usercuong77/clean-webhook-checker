@@ -75,6 +75,26 @@ class Step271VipLikeSmmCoreTests(unittest.TestCase):
         self.assertTrue(item["supportsReactionChoice"])
         self.assertIn("love", item["allowedReactionTypes"])
 
+    def test_refresh_package_request_uses_longer_timeout(self):
+        os.environ["SMM_API_KEY"] = "test-key"
+        get_config.cache_clear()
+        api_result = SmmApiResult(False, 0, "https://example.test/api/prices", None, "", "timeout", 25_000)
+
+        with patch("app_modules.features.viplike.call_smm_api", return_value=api_result) as call_smm_api:
+            get_viplike_packages(refresh=True)
+
+        self.assertGreaterEqual(call_smm_api.call_args.kwargs["timeout_seconds"], 20.0)
+
+    def test_non_refresh_package_request_keeps_fast_timeout(self):
+        os.environ["SMM_API_KEY"] = "test-key"
+        get_config.cache_clear()
+        api_result = SmmApiResult(False, 0, "https://example.test/api/prices", None, "", "timeout", 6_000)
+
+        with patch("app_modules.features.viplike.call_smm_api", return_value=api_result) as call_smm_api:
+            get_viplike_packages(refresh=False)
+
+        self.assertLessEqual(call_smm_api.call_args.kwargs["timeout_seconds"], 6.0)
+
     def test_live_api_package_payload_is_limited_to_nine_facebook_like_packages(self):
         os.environ["SMM_API_KEY"] = "test-key"
         get_config.cache_clear()
