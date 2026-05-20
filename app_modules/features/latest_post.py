@@ -249,8 +249,32 @@ def get_latest_post_direct_from_input(
                         attempt["actorName"] = ownership["actorName"]
                         attempt["taggedPostSkipped"] = True
                         attempts.append(attempt)
+                        if expected_owner_uid:
+                            deep_result = fetch_deep_owner_post_from_timeline_html(
+                                cleaned_input,
+                                fetch.text,
+                                fetch.final_url or url,
+                                expected_owner_uid,
+                                owner_name,
+                                candidate,
+                                timeout,
+                            )
+                            attempts.extend(deep_result.pop("probeAttempts", []))
+                            if deep_result.get("ok"):
+                                deep_result["probeAttempts"] = attempts
+                                return deep_result
+                            if deep_result.get("reason"):
+                                best_failure = choose_better_latest_post_result(
+                                    best_failure,
+                                    {
+                                        "method": deep_result.get("method"),
+                                        "reason": deep_result.get("reason"),
+                                        "httpCode": deep_result.get("httpCode"),
+                                        "url": deep_result.get("probeUrl"),
+                                        "finalUrl": deep_result.get("finalUrl"),
+                                    },
+                                )
                         best_failure = choose_better_latest_post_result(best_failure, attempt)
-                        _remember_direct_checkpost_requires_cookie(cache_key)
                         if candidate.has_cookie:
                             tagged_cookie_scan_count += 1
                             if expected_owner_uid and tagged_cookie_scan_count >= _direct_tagged_cookie_scan_limit():
@@ -465,6 +489,239 @@ def extract_post_actor_from_html(html_raw: Any, post_id_raw: Any) -> dict[str, s
     return {"uid": "", "name": ""}
 
 
+def fetch_deep_owner_post_from_timeline_html(
+    input_raw: Any,
+    html_raw: Any,
+    referer_url: str,
+    owner_uid_raw: Any,
+    owner_name: str,
+    candidate: CookieCandidate,
+    timeout: float,
+) -> dict[str, Any]:
+    owner_uid = normalize_uid(owner_uid_raw)
+    if not owner_uid:
+        return _empty_result("", "direct_graphql_invalid_owner", "owner_uid_required_for_deep_timeline", 0)
+
+    request = build_timeline_graphql_request(html_raw, referer_url, owner_uid)
+    if not request:
+        return _empty_result(owner_uid, "direct_graphql_unavailable", "timeline_graphql_params_not_found", 0)
+
+    headers = _headers_for_candidate(candidate)[0][1]
+    graphql_fetch = _fetch_graphql_text(request["url"], headers, request["data"], timeout)
+    method = "direct_graphql_with_cookie" if candidate.has_cookie else "direct_graphql_no_cookie"
+    attempt = {
+        "url": request["url"],
+        "httpCode": graphql_fetch.http_code,
+        "reason": graphql_fetch.reason,
+        "finalUrl": graphql_fetch.final_url,
+        "method": method,
+        "cookieSource": candidate.source,
+        "header": "graphql_timeline",
+        "deepTimeline": True,
+    }
+    if candidate.masked_id:
+        attempt["cookieAccount"] = candidate.masked_id
+
+    if not (200 <= graphql_fetch.http_code < 400) or not graphql_fetch.text:
+        attempt["reason"] = build_latest_post_failure_reason(graphql_fetch.text, graphql_fetch.final_url, graphql_fetch.http_code)
+        failure = _empty_result(owner_uid, method, str(attempt["reason"]), graphql_fetch.http_code)
+        failure["probeAttempts"] = [attempt]
+        return failure
+
+    post_ids = extract_ordered_post_ids_from_html(graphql_fetch.text)
+    for post_id in post_ids:
+        ownership = analyze_latest_post_ownership(graphql_fetch.text, post_id, owner_uid)
+        if ownership["isTaggedOrSharedByOther"]:
+            continue
+        actor_uid = str(ownership.get("actorUid") or "")
+        if actor_uid and actor_uid != owner_uid:
+            continue
+        if not actor_uid:
+            continue
+
+        content = extract_latest_post_content_from_html(graphql_fetch.text, post_id)
+        post_link = build_latest_post_link(owner_uid, post_id)
+        attempt["reason"] = "ok_owner_post_graphql"
+        if candidate.has_cookie:
+            _remember_direct_checkpost_working_cookie(candidate)
+        return {
+            "ok": True,
+            "uid": owner_uid,
+            "username": extract_profile_username_from_url(input_raw),
+            "name": str(owner_name or ""),
+            "postId": post_id,
+            "timestamp": extract_timestamp_for_post_id(graphql_fetch.text, post_id),
+            "link": post_link,
+            "content": content,
+            "postContent": content,
+            "method": method,
+            "source": "direct_link_scrape",
+            "reason": "ok_owner_post_graphql",
+            "httpCode": graphql_fetch.http_code,
+            "probeUrl": request["url"],
+            "finalUrl": graphql_fetch.final_url,
+            "cookieSource": candidate.source,
+            "cookieFallbackUsed": candidate.has_cookie,
+            "probeAttempts": [attempt],
+            "directInput": sanitize_latest_post_input(input_raw),
+            "ownerUid": owner_uid,
+            "actorUid": actor_uid,
+            "actorName": str(ownership.get("actorName") or ""),
+            "deepTimelineUsed": True,
+        }
+
+    attempt["reason"] = "owner_post_not_found_in_deep_timeline"
+    failure = _empty_result(owner_uid, method, "owner_post_not_found_in_deep_timeline", graphql_fetch.http_code)
+    failure["probeAttempts"] = [attempt]
+    failure["source"] = "direct_link_scrape"
+    failure["directInput"] = sanitize_latest_post_input(input_raw)
+    return failure
+
+
+def build_timeline_graphql_request(html_raw: Any, referer_url: str, owner_uid: str) -> dict[str, Any] | None:
+    html = normalize_facebook_payload_text(html_raw)
+    if not html:
+        return None
+
+    query = extract_timeline_graphql_query(html)
+    lsd = extract_regex_group(html, r'\["LSD",\[\],\{"token":"([^"]+)"')
+    if not lsd:
+        lsd = extract_regex_group(html, r'"lsd"\s*:\s*\{"name":"lsd","value":"([^"]+)"')
+    jazoest = extract_regex_group(html, r"jazoest=(\d+)")
+    hsi = extract_regex_group(html, r'"hsi":"(\d+)"')
+    spin_r = extract_regex_group(html, r'"__spin_r":(\d+)')
+    spin_t = extract_regex_group(html, r'"__spin_t":(\d+)')
+    if not query or not lsd or not query.get("queryID"):
+        return None
+
+    variables = dict(query["variables"])
+    count = _deep_timeline_count()
+    variables["count"] = count
+    variables["stream_count"] = count
+    variables["userID"] = owner_uid
+
+    data = {
+        "av": "0",
+        "__user": "0",
+        "__a": "1",
+        "__req": "1",
+        "dpr": "1",
+        "__ccg": "GOOD",
+        "__rev": spin_r,
+        "__hsi": hsi,
+        "__comet_req": "15",
+        "lsd": lsd,
+        "jazoest": jazoest,
+        "__spin_r": spin_r,
+        "__spin_b": "trunk",
+        "__spin_t": spin_t,
+        "fb_api_caller_class": "RelayModern",
+        "fb_api_req_friendly_name": "ProfileCometTimelineFeedQuery",
+        "variables": json.dumps(variables, separators=(",", ":")),
+        "server_timestamps": "true",
+        "doc_id": str(query["queryID"]),
+    }
+    data = {key: value for key, value in data.items() if value not in {"", None}}
+    return {"url": "https://www.facebook.com/api/graphql/", "data": data, "referer": referer_url}
+
+
+def extract_timeline_graphql_query(html_raw: Any) -> dict[str, Any] | None:
+    html = normalize_facebook_payload_text(html_raw)
+    marker = '"queryName":"ProfileCometTimelineFeedQuery"'
+    marker_index = html.find(marker)
+    if marker_index < 0:
+        return None
+
+    prefix = html[max(0, marker_index - 12000) : marker_index]
+    query_matches = list(re.finditer(r'"queryID":"(\d+)"', prefix))
+    if not query_matches:
+        return None
+    query_id = query_matches[-1].group(1)
+
+    variables_marker = '"variables":'
+    variables_pos = prefix.rfind(variables_marker)
+    if variables_pos < 0:
+        return None
+    variables_start = prefix.find("{", variables_pos + len(variables_marker))
+    variables_end = find_balanced_json_end(prefix, variables_start)
+    if variables_start < 0 or variables_end <= variables_start:
+        return None
+    try:
+        variables = json.loads(prefix[variables_start:variables_end])
+    except ValueError:
+        return None
+    return {"queryID": query_id, "variables": variables}
+
+
+def find_balanced_json_end(text: str, start: int) -> int:
+    if start < 0 or start >= len(text) or text[start] != "{":
+        return -1
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return -1
+
+
+def extract_ordered_post_ids_from_html(html_raw: Any) -> list[str]:
+    html = normalize_facebook_payload_text(html_raw)
+    ids: list[str] = []
+    patterns = [
+        r'"post_id"\s*:\s*"([A-Za-z0-9_]{8,})"',
+        r'"top_level_post_id"\s*:\s*"([A-Za-z0-9_]{8,})"',
+        r'"story_fbid"\s*:\s*"([A-Za-z0-9_]{8,})"',
+        r"/posts/([A-Za-z0-9_]{8,})",
+    ]
+    matches: list[tuple[int, str]] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, html, flags=re.IGNORECASE):
+            post_id = str(match.group(1) or "").strip()
+            if is_latest_post_id_token(post_id):
+                matches.append((match.start(), post_id))
+    for _, post_id in sorted(matches, key=lambda item: item[0]):
+        if post_id not in ids:
+            ids.append(post_id)
+    return ids
+
+
+def extract_timestamp_for_post_id(html_raw: Any, post_id_raw: Any) -> int:
+    html = normalize_facebook_payload_text(html_raw)
+    post_id = str(post_id_raw or "").strip()
+    if not html or not post_id:
+        return 0
+    for match in re.finditer(re.escape(post_id), html, flags=re.IGNORECASE):
+        window = html[max(0, match.start() - 2500) : min(len(html), match.end() + 4500)]
+        for pattern in LATEST_POST_TIME_PATTERNS:
+            time_match = re.search(pattern, window, flags=re.IGNORECASE)
+            if time_match:
+                timestamp = normalize_unix_timestamp_seconds(time_match.group(1))
+                if timestamp:
+                    return timestamp
+    return 0
+
+
+def extract_regex_group(text: str, pattern: str) -> str:
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    return str(match.group(1) or "").strip() if match else ""
+
+
 def build_direct_latest_post_link(input_raw: Any, post_id_raw: Any, uid: str = "", username: str = "") -> str:
     post_id = str(post_id_raw or "").strip()
     if not post_id:
@@ -528,6 +785,14 @@ def _direct_tagged_cookie_scan_limit() -> int:
     except ValueError:
         configured = 2
     return max(1, min(configured, 10))
+
+
+def _deep_timeline_count() -> int:
+    try:
+        configured = int(os.getenv("CHECKPOST_DEEP_TIMELINE_COUNT", "8"))
+    except ValueError:
+        configured = 8
+    return max(2, min(configured, 20))
 
 
 def _prioritize_direct_cookie_candidates(candidates: list[CookieCandidate]) -> list[CookieCandidate]:
@@ -1120,6 +1385,36 @@ def latest_post_failure_priority(reason_raw: Any, http_code_raw: Any) -> int:
 def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchResult:
     try:
         response = requests.get(url, headers=dict(headers), timeout=timeout, allow_redirects=True)
+        return FetchResult(
+            http_code=response.status_code,
+            text=response.text or "",
+            final_url=response.url or url,
+            reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
+        )
+    except requests.RequestException as exc:
+        return FetchResult(0, "", url, f"request_error:{type(exc).__name__}")
+
+
+def _fetch_graphql_text(
+    url: str,
+    headers: Mapping[str, str],
+    data: Mapping[str, Any],
+    timeout: float,
+) -> FetchResult:
+    request_headers = dict(headers)
+    request_headers.update(
+        {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://www.facebook.com",
+            "Referer": "https://www.facebook.com/",
+            "X-FB-Friendly-Name": "ProfileCometTimelineFeedQuery",
+        }
+    )
+    lsd = str(data.get("lsd") or "")
+    if lsd:
+        request_headers["X-FB-LSD"] = lsd
+    try:
+        response = requests.post(url, headers=request_headers, data=dict(data), timeout=timeout, allow_redirects=True)
         return FetchResult(
             http_code=response.status_code,
             text=response.text or "",

@@ -192,7 +192,7 @@ def checkpost_direct_input(req: LatestPostRequest) -> dict[str, Any]:
                 request_cookie_pool=req.cookiesPool or req.cookies_pool,
                 owner_uid=owner_uid,
                 owner_name=owner_name,
-                prefer_cookie=True,
+                prefer_cookie=False,
             )
             retry["uid"] = owner_uid
             retry["name"] = owner_name

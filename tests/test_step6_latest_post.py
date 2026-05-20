@@ -267,7 +267,7 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(payload["ownerResolveSource"], "test")
         self.assertEqual(direct_latest_post.call_count, 2)
         self.assertEqual(direct_latest_post.call_args.kwargs["owner_uid"], "100005122057274")
-        self.assertTrue(direct_latest_post.call_args.kwargs["prefer_cookie"])
+        self.assertFalse(direct_latest_post.call_args.kwargs["prefer_cookie"])
 
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
