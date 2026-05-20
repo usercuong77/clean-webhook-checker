@@ -4,6 +4,7 @@ from unittest.mock import patch
 from app_modules.api.controller import LatestPostRequest, checkpost_direct_input, latest_post_input
 from app_modules.features.latest_post import (
     DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE,
+    DIRECT_CHECKPOST_PREFERRED_COOKIE_FINGERPRINT,
     FetchResult,
     build_cookie_candidates,
     build_direct_latest_post_probe_urls,
@@ -22,6 +23,9 @@ from app_modules.resolvers.uid_resolver import ResolvedInput
 class Step6LatestPostTests(unittest.TestCase):
     def setUp(self):
         DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE.clear()
+        import app_modules.features.latest_post as latest_post_module
+
+        latest_post_module.DIRECT_CHECKPOST_PREFERRED_COOKIE_FINGERPRINT = ""
 
     def test_probe_urls_prefer_fast_public_desktop_urls(self):
         urls = build_facebook_latest_post_probe_urls("100000000000001", "test.user", with_cookie=False)
@@ -217,6 +221,48 @@ class Step6LatestPostTests(unittest.TestCase):
         third_call_headers = fetch_text.call_args_list[2].args[1]
         self.assertIn("Cookie", third_call_headers)
 
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_direct_prioritizes_last_working_cookie(self, fetch_text, load_cookie_accounts):
+        load_cookie_accounts.return_value = [
+            _cookie_account("100000000000077"),
+            _cookie_account("100000000000088"),
+        ]
+        fetch_text.side_effect = [
+            FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, "checkpoint", "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, "checkpoint", "https://www.facebook.com/test.user", "ok"),
+            FetchResult(
+                200,
+                (
+                    '"post_id":"123456789012345"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Good cookie latest post content"}'
+                ),
+                "https://www.facebook.com/test.user?sk=posts",
+                "ok",
+            ),
+            FetchResult(
+                200,
+                (
+                    '"post_id":"223456789012345"'
+                    '"publish_time":1760000001'
+                    '"message":{"text":"Preferred cookie latest post content"}'
+                ),
+                "https://www.facebook.com/test.user?sk=posts",
+                "ok",
+            ),
+        ]
+
+        first_payload = get_latest_post_direct_from_input("https://www.facebook.com/test.user")
+        second_payload = get_latest_post_direct_from_input("https://www.facebook.com/test.user")
+
+        self.assertTrue(first_payload["ok"])
+        self.assertTrue(second_payload["ok"])
+        self.assertEqual(second_payload["content"], "Preferred cookie latest post content")
+        fifth_call_headers = fetch_text.call_args_list[4].args[1]
+        self.assertIn("c_user=100000000000088", fifth_call_headers["Cookie"])
+
 
 def _resolved(uid="", username="", resolver_name=""):
     return ResolvedInput(
@@ -230,14 +276,14 @@ def _resolved(uid="", username="", resolver_name=""):
     )
 
 
-def _cookie_account():
+def _cookie_account(c_user="100000000000099"):
     from app_modules.resolvers.facebook_cookies import CookieAccount
 
     return CookieAccount(
-        c_user="100000000000099",
+        c_user=c_user,
         source="test_cookie_file",
         index=0,
-        cookies={"c_user": "100000000000099", "xs": "fake-xs-token"},
+        cookies={"c_user": c_user, "xs": f"fake-xs-token-{c_user}"},
     )
 
 

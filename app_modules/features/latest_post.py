@@ -73,6 +73,7 @@ GENERIC_POST_CONTENT_FRAGMENTS = (
 
 INVISIBLE_INPUT_CHARS_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE0E\uFE0F]")
 DIRECT_CHECKPOST_REQUIRES_COOKIE_CACHE: dict[str, float] = {}
+DIRECT_CHECKPOST_PREFERRED_COOKIE_FINGERPRINT = ""
 
 
 @dataclass(frozen=True)
@@ -195,14 +196,16 @@ def get_latest_post_direct_from_input(
     direct_uid = extract_direct_uid_from_facebook_url(cleaned_input)
     direct_username = extract_profile_username_from_url(cleaned_input)
     cache_key = _direct_checkpost_cache_key(cleaned_input, direct_uid, direct_username)
-    cookie_candidates = [candidate for candidate in build_cookie_candidates(request_cookies, request_cookie_pool) if candidate.has_cookie]
+    cookie_candidates = _prioritize_direct_cookie_candidates(
+        [candidate for candidate in build_cookie_candidates(request_cookies, request_cookie_pool) if candidate.has_cookie]
+    )
     direct_candidates: list[CookieCandidate] = []
     if not cookie_candidates or not _direct_checkpost_requires_cookie(cache_key):
         direct_candidates.append(CookieCandidate("no_cookie", {}))
     direct_candidates.extend(cookie_candidates)
 
     for candidate in direct_candidates:
-        move_to_cookie = False
+        move_to_next_candidate = False
         for url in probe_urls:
             for header_label, headers in _headers_for_candidate(candidate):
                 fetch = _fetch_text(url, headers, timeout)
@@ -228,6 +231,8 @@ def get_latest_post_direct_from_input(
                     )
                     attempt["reason"] = "ok"
                     attempts.append(attempt)
+                    if candidate.has_cookie:
+                        _remember_direct_checkpost_working_cookie(candidate)
                     return {
                         "ok": True,
                         "uid": direct_uid,
@@ -259,9 +264,9 @@ def get_latest_post_direct_from_input(
                 if not candidate.has_cookie and _is_direct_no_cookie_terminal_reason(fail_reason):
                     _remember_direct_checkpost_requires_cookie(cache_key)
                     attempt["fastFallbackToCookie"] = True
-                    move_to_cookie = True
+                    move_to_next_candidate = True
                     break
-            if move_to_cookie:
+            if move_to_next_candidate:
                 break
 
     failure = _failure_from_attempt(direct_uid, attempts, best_failure, "direct_latest_post_not_found")
@@ -388,6 +393,20 @@ def _direct_checkpost_requires_cookie_ttl() -> int:
     except ValueError:
         configured = 21600
     return max(300, min(configured, 86400))
+
+
+def _prioritize_direct_cookie_candidates(candidates: list[CookieCandidate]) -> list[CookieCandidate]:
+    preferred = DIRECT_CHECKPOST_PREFERRED_COOKIE_FINGERPRINT
+    if not preferred:
+        return candidates
+    return sorted(candidates, key=lambda candidate: 0 if _cookie_fingerprint(candidate.cookies) == preferred else 1)
+
+
+def _remember_direct_checkpost_working_cookie(candidate: CookieCandidate) -> None:
+    global DIRECT_CHECKPOST_PREFERRED_COOKIE_FINGERPRINT
+    fingerprint = _cookie_fingerprint(candidate.cookies)
+    if fingerprint:
+        DIRECT_CHECKPOST_PREFERRED_COOKIE_FINGERPRINT = fingerprint
 
 
 def _is_direct_no_cookie_terminal_reason(reason_raw: Any) -> bool:
