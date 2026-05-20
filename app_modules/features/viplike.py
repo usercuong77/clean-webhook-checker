@@ -18,6 +18,8 @@ DEFAULT_FACEBOOK_LIKE_ENDPOINT = "/api/facebook-like-gia-re/buy"
 DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS = 6.0
 DEFAULT_SMM_PACKAGE_REFRESH_TIMEOUT_SECONDS = 25.0
 MAX_SMM_PACKAGE_REFRESH_TIMEOUT_SECONDS = 45.0
+DEFAULT_SMM_ORDER_TIMEOUT_SECONDS = 25.0
+MAX_SMM_ORDER_TIMEOUT_SECONDS = 45.0
 VALID_REACTIONS = ("like", "love", "care", "haha", "wow", "sad", "angry")
 CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES = (
     "facebook_like",
@@ -135,7 +137,12 @@ def create_viplike_order(request: Mapping[str, Any]) -> dict[str, Any]:
         )
         return payload_result
 
-    api_result = call_smm_api("POST", payload_result["endpoint"], payload_result["payload"])
+    api_result = call_smm_api(
+        "POST",
+        payload_result["endpoint"],
+        payload_result["payload"],
+        timeout_seconds=smm_order_timeout_seconds(),
+    )
     order_id = extract_smm_order_id(api_result.json)
     message = pick_smm_api_message(api_result.json, "Tao don thanh cong." if api_result.ok else api_result.error)
     payload_result.update(
@@ -302,6 +309,16 @@ def smm_package_timeout_seconds(refresh: bool = False) -> float:
         return max(DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS, min(configured, MAX_SMM_PACKAGE_REFRESH_TIMEOUT_SECONDS))
     configured = env_float("SMM_PACKAGE_TIMEOUT_SEC") or float(config.smm_api_timeout_seconds or DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS)
     return max(1.0, min(configured, DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS))
+
+
+def smm_order_timeout_seconds() -> float:
+    config = get_config()
+    configured = (
+        env_float("SMM_ORDER_TIMEOUT_SEC")
+        or env_float("VIPLIKE_ORDER_TIMEOUT_SEC")
+        or max(float(config.smm_api_timeout_seconds or 0), DEFAULT_SMM_ORDER_TIMEOUT_SECONDS)
+    )
+    return max(DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS, min(configured, MAX_SMM_ORDER_TIMEOUT_SECONDS))
 
 
 def env_float(name: str) -> float:

@@ -176,6 +176,36 @@ class Step271VipLikeSmmCoreTests(unittest.TestCase):
         self.assertFalse(payload["created"])
         self.assertEqual(payload["reason"], "viplike_order_disabled")
 
+    def test_confirmed_order_uses_longer_timeout_when_enabled(self):
+        os.environ["SMM_API_KEY"] = "test-key"
+        os.environ["VIPLIKE_ORDER_ENABLED"] = "1"
+        get_config.cache_clear()
+        api_result = SmmApiResult(
+            True,
+            200,
+            "https://example.test/api/facebook-like-gia-re/buy",
+            {"success": True, "data": {"order_id": "order-1"}},
+            "{}",
+            "",
+            10_000,
+        )
+
+        with patch("app_modules.features.viplike.call_smm_api", return_value=api_result) as call_smm_api:
+            payload = create_viplike_order(
+                {
+                    "uid": "100000000000001",
+                    "postId": "999888777",
+                    "packageName": "facebook_like_v3",
+                    "quantity": 50,
+                    "reactionType": "like",
+                    "confirm": True,
+                }
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["orderId"], "order-1")
+        self.assertGreaterEqual(call_smm_api.call_args.kwargs["timeout_seconds"], 20.0)
+
     def test_dedupe_key_sorts_reactions(self):
         key_a = build_viplike_order_dedupe_key(
             {
