@@ -53,6 +53,6 @@ def get_config() -> ServiceConfig:
         webhook_shared_secret=os.getenv("WEBHOOK_SHARED_SECRET", "").strip(),
         smm_api_base_url=_first_env(("SMM_API_BASE_URL", "SMM_API_DOMAIN", "VIPLIKE_SMM_API_BASE_URL")),
         smm_api_key=_first_env(("SMM_API_KEY", "VIPLIKE_SMM_API_KEY")),
-        smm_api_timeout_seconds=float(os.getenv("SMM_API_TIMEOUT_SEC", os.getenv("SMM_API_TIMEOUT", "20"))),
+        smm_api_timeout_seconds=float(os.getenv("SMM_API_TIMEOUT_SEC", os.getenv("SMM_API_TIMEOUT", "6"))),
         viplike_order_enabled=_env_flag("VIPLIKE_ORDER_ENABLED", False),
     )

@@ -14,6 +14,7 @@ from app_modules.core.config import get_config
 
 DEFAULT_SMM_API_BASE_URL = "https://api.baostar.pro/api/v2"
 DEFAULT_FACEBOOK_LIKE_ENDPOINT = "/api/facebook-like-gia-re/buy"
+DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS = 6.0
 VALID_REACTIONS = ("like", "love", "care", "haha", "wow", "sad", "angry")
 CANONICAL_FACEBOOK_LIKE_PACKAGE_NAMES = (
     "facebook_like",
@@ -61,7 +62,7 @@ def get_viplike_packages(refresh: bool = False, include_raw: bool = False) -> di
     source = ""
 
     if api_configured:
-        api_result = call_smm_api("GET", "/api/prices")
+        api_result = call_smm_api("GET", "/api/prices", timeout_seconds=smm_package_timeout_seconds())
         if api_result.ok and isinstance(api_result.json, Mapping):
             rows = build_smm_package_rows(api_result.json)
             packages = normalize_viplike_package_rows(rows)
@@ -219,7 +220,12 @@ def build_viplike_order_payload(request: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def call_smm_api(method: str, endpoint: str, payload: Mapping[str, Any] | None = None) -> SmmApiResult:
+def call_smm_api(
+    method: str,
+    endpoint: str,
+    payload: Mapping[str, Any] | None = None,
+    timeout_seconds: float | None = None,
+) -> SmmApiResult:
     started = perf_counter()
     config = get_config()
     if not config.smm_api_key:
@@ -231,13 +237,14 @@ def call_smm_api(method: str, endpoint: str, payload: Mapping[str, Any] | None =
 
     last_result: SmmApiResult | None = None
     method_upper = clean_text(method or "POST").upper()
+    request_timeout = timeout_seconds if timeout_seconds is not None else config.smm_api_timeout_seconds
     for index, url in enumerate(urls):
         try:
             if method_upper == "GET":
                 response = requests.get(
                     url,
                     headers={"api-key": config.smm_api_key},
-                    timeout=config.smm_api_timeout_seconds,
+                    timeout=request_timeout,
                     allow_redirects=True,
                 )
             else:
@@ -245,7 +252,7 @@ def call_smm_api(method: str, endpoint: str, payload: Mapping[str, Any] | None =
                     url,
                     headers={"api-key": config.smm_api_key},
                     json=dict(payload or {}),
-                    timeout=config.smm_api_timeout_seconds,
+                    timeout=request_timeout,
                     allow_redirects=True,
                 )
             body = response.text or ""
@@ -281,6 +288,11 @@ def call_smm_api(method: str, endpoint: str, payload: Mapping[str, Any] | None =
     return last_result or SmmApiResult(False, 0, "", None, "", "smm_api_failed", 0)
 
 
+def smm_package_timeout_seconds() -> float:
+    config = get_config()
+    return max(1.0, min(float(config.smm_api_timeout_seconds or DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS), DEFAULT_SMM_PACKAGE_TIMEOUT_SECONDS))
+
+
 def build_smm_request_urls(endpoint: str) -> list[str]:
     endpoint_clean = clean_text(endpoint)
     if not endpoint_clean:
@@ -292,6 +304,8 @@ def build_smm_request_urls(endpoint: str) -> list[str]:
 
     urls: list[str] = []
     for base in smm_domain_candidates():
+        if endpoint_clean.startswith("/api/") and re.search(r"/api(?:/v2)?$", base.rstrip("/"), flags=re.I):
+            continue
         append_unique(urls, base.rstrip("/") + endpoint_clean)
     return urls
 
