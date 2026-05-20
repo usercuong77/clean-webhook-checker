@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app_modules.checkers.live_die import check_live_die
 from app_modules.core.config import get_config
 from app_modules.features.latest_post import get_latest_post, get_latest_post_direct_from_input, sanitize_latest_post_input
-from app_modules.features.profile_name import choose_profile_name, resolve_profile_name
+from app_modules.features.profile_name import choose_profile_name, resolve_profile_tick_from_input
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
 from app_modules.resolvers.uid_resolver import resolve_input
 
@@ -20,6 +20,7 @@ class CheckRequest(BaseModel):
     input: str = Field(default="")
     mode: str = Field(default="all")
     includeName: bool = Field(default=True)
+    forceCookie: bool = Field(default=False)
 
 
 class LatestPostRequest(BaseModel):
@@ -115,39 +116,34 @@ def check_name_input(req: CheckRequest) -> dict[str, Any]:
 def check_tick_input(req: CheckRequest) -> dict[str, Any]:
     started = perf_counter()
     raw_input = (req.input or "").strip()
-    resolved = resolve_input(raw_input)
-    live_die = check_live_die(resolved, mode=req.mode)
-
-    if live_die.status == "LIVE":
-        name_result = resolve_profile_name(resolved, include_verified=True)
-        name = name_result.name or resolved.username or resolved.uid
-    else:
-        name_result = None
-        name = ""
-
-    verified_label = (name_result.verified_label if name_result else "") or _verified_account_label(name)
+    tick = resolve_profile_tick_from_input(raw_input, force_cookie=bool(req.forceCookie))
+    name = tick.name
+    verified_label = tick.verified_label or _verified_account_label(name)
+    status: Status = "LIVE" if name or verified_label else "UNKNOWN"
     elapsed_ms = int((perf_counter() - started) * 1000)
     return {
         "ok": True,
-        "status": live_die.status,
-        "confidence": live_die.confidence,
-        "uid": resolved.uid,
-        "username": resolved.username,
+        "status": status,
+        "confidence": "strong" if status == "LIVE" else "weak",
+        "uid": tick.uid,
+        "username": tick.username,
         "name": name,
         "displayName": _display_profile_name(name),
         "verified": bool(verified_label),
         "isVerified": bool(verified_label),
         "verifiedLabel": verified_label,
-        "canonicalUrl": resolved.canonical_url,
-        "source": name_result.source if name_result else live_die.source,
-        "reason": name_result.reason if name_result else f"checktick_skipped:{live_die.reason}",
-        "httpCode": live_die.http_code,
+        "canonicalUrl": tick.canonical_url,
+        "source": tick.source,
+        "reason": tick.reason,
+        "httpCode": tick.http_code,
         "elapsedMs": elapsed_ms,
-        "probes": live_die.probes,
-        "nameSource": name_result.source if name_result else "",
-        "nameReason": name_result.reason if name_result else "account_not_live",
-        "nameProbes": name_result.probes if name_result else [],
-        "resolverDebug": _resolver_debug_summary(resolved),
+        "probes": tick.probes,
+        "nameSource": tick.source,
+        "nameReason": tick.reason,
+        "nameProbes": tick.probes,
+        "usedCookie": tick.used_cookie,
+        "checkTickMode": "cookie" if tick.used_cookie else "no_cookie",
+        "resolverDebug": {},
     }
 
 

@@ -11,6 +11,7 @@ from app_modules.features.profile_name import (
     extract_profile_name,
     extract_profile_verified_label,
     is_valid_profile_name,
+    resolve_profile_tick_from_input,
     resolve_profile_name,
 )
 from app_modules.resolvers.facebook_cookies import CookieAccount
@@ -60,13 +61,24 @@ class Step5ProfileNameTests(unittest.TestCase):
 
     def test_extracts_verified_from_profile_markers(self):
         self.assertEqual(
-            extract_profile_verified_label('"show_verified_badge_on_profile":true'),
+            extract_profile_verified_label(
+                'profile_header_renderer Độ Phùng "show_verified_badge_on_profile":true',
+                "Độ Phùng",
+            ),
             "Tài khoản đã xác minh",
         )
         self.assertEqual(
-            extract_profile_verified_label('"is_verified":true'),
+            extract_profile_verified_label('ProfileCometHeader "is_verified":true', "Độ Phùng"),
             "Tài khoản đã xác minh",
         )
+
+    def test_verified_marker_ignores_comment_context(self):
+        html = """
+        profile_header_renderer <h1>Nth Wag</h1>
+        CometUFIComment comment_author "is_verified":true Verified account
+        """
+
+        self.assertEqual(extract_profile_verified_label(html, "Nth Wag"), "")
 
     def test_builds_username_and_uid_urls(self):
         resolved = _resolved(uid="100000000000001", username="test.user")
@@ -104,12 +116,10 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(die_name, "")
 
     @patch("app_modules.checkers.live_die.dispatch_mode")
-    @patch("app_modules.features.profile_name.load_cookie_accounts")
-    @patch("app_modules.features.profile_name._fetch_text")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
     @patch.dict("app_modules.api.controller.os.environ", {"PROFILE_NAME_LOOKUP_ENABLED": "0"}, clear=False)
-    def test_checktick_bypasses_default_check_name_gate(self, fetch_text, load_accounts, dispatch_mode):
-        load_accounts.return_value = [_cookie_account()]
-        fetch_text.return_value = _fetch_result(
+    def test_checktick_bypasses_default_check_name_gate(self, fetch_limited, dispatch_mode):
+        fetch_limited.return_value = _fetch_result(
             200,
             '100000000000001<meta property="og:title" content="Name Command Tài khoản đã xác minh">',
             "https://www.facebook.com/profile.php?id=100000000000001",
@@ -131,12 +141,51 @@ class Step5ProfileNameTests(unittest.TestCase):
         tick_payload = check_tick_input(CheckRequest(input="100000000000001", mode="1", includeName=True))
 
         self.assertEqual(check_payload["name"], "")
-        self.assertEqual(tick_payload["name"], "Name Command Tài khoản đã xác minh")
+        self.assertEqual(tick_payload["name"], "Name Command")
         self.assertEqual(tick_payload["displayName"], "Name Command")
         self.assertTrue(tick_payload["verified"])
         self.assertEqual(tick_payload["verifiedLabel"], "Tài khoản đã xác minh")
-        self.assertEqual(tick_payload["nameSource"], "profile_name_cookie")
-        self.assertEqual(tick_payload["nameReason"], "name_found_cookie")
+        self.assertEqual(tick_payload["nameSource"], "profile_tick_no_cookie")
+        self.assertEqual(tick_payload["checkTickMode"], "no_cookie")
+
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_returns_no_cookie_result_without_cookie_fallback(self, fetch_limited, load_accounts):
+        load_accounts.return_value = [_cookie_account()]
+        fetch_limited.return_value = _fetch_result(
+            200,
+            '<meta property="og:title" content="No Cookie Name">',
+            "https://www.facebook.com/no.cookie",
+            "ok",
+        )
+
+        result = check_tick_input(CheckRequest(input="https://www.facebook.com/no.cookie", mode="1", includeName=True))
+
+        self.assertEqual(result["status"], "LIVE")
+        self.assertEqual(result["name"], "No Cookie Name")
+        self.assertFalse(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "no_cookie")
+        self.assertEqual(load_accounts.call_count, 0)
+
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_force_cookie_skips_no_cookie(self, fetch_limited, load_accounts):
+        load_accounts.return_value = [_cookie_account()]
+        fetch_limited.return_value = _fetch_result(
+            200,
+            '<meta property="og:title" content="Cookie Only Verified account">',
+            "https://www.facebook.com/cookie.only",
+            "ok",
+        )
+
+        result = check_tick_input(
+            CheckRequest(input="https://www.facebook.com/cookie.only", mode="1", includeName=True, forceCookie=True)
+        )
+
+        self.assertEqual(result["name"], "Cookie Only")
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "cookie")
 
     @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
     def test_live_falls_back_to_username_when_name_missing(self, load_accounts):

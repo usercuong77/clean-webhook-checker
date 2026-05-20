@@ -14,6 +14,12 @@ import requests
 from app_modules.checkers.live_die import LiveDieResult
 from app_modules.core.config import get_config
 from app_modules.resolvers.facebook_cookies import cookie_header, load_cookie_accounts
+from app_modules.resolvers.facebook_uid_resolver import (
+    extract_uid_from_url,
+    extract_username_from_url,
+    normalize_uid,
+    normalize_url_input,
+)
 from app_modules.resolvers.uid_resolver import ResolvedInput
 
 
@@ -88,6 +94,43 @@ VERIFIED_MARKER_PATTERNS = [
     re.compile(r'"is_verified"\s*:\s*true', re.IGNORECASE),
     re.compile(r'"isVerified"\s*:\s*true', re.IGNORECASE),
 ]
+PROFILE_HEADER_CONTEXT_MARKERS = (
+    "profile_header_renderer",
+    "profilecometheader",
+    "xfbprofileentityconvergenceheaderrenderer",
+    "profile_header",
+    "cover_photo",
+    "profile_intro_card",
+    "profile_tile_section",
+    "cometprofileplus",
+    "profile_owner",
+    "owning_profile",
+    "profile_owner_id",
+    "timelineprofile",
+)
+COMMENT_CONTEXT_MARKERS = (
+    "cometuficomment",
+    "cometcommentnameandbadges",
+    "comet_comment_author_name",
+    "comment_author",
+    '"comment"',
+    "comment_id",
+    "feedback_comment",
+    "comment_list",
+)
+TICK_PUBLIC_READ_CAP_BYTES = 1_800_000
+TICK_COOKIE_READ_CAP_BYTES = 2_800_000
+PROFILE_TICK_VERIFIED_MARKERS = (
+    "verified account",
+    "tài khoản đã xác minh",
+    "tai khoan da xac minh",
+    '"show_verified_badge_on_profile":true',
+    '"is_verified":true',
+    '"isVerified":true',
+    'show_verified_badge_on_profile\\":true',
+    'is_verified\\":true',
+    'isVerified\\":true',
+)
 BUILTIN_CONFIRMED_PROFILE_NAME_MAP = {
     "100080441816993": "Ng Trinh",
     "100010211341364": "Vo Khac Duy",
@@ -108,6 +151,21 @@ class ProfileNameResult:
     reason: str
     probes: list[dict[str, Any]] = field(default_factory=list)
     verified_label: str = ""
+
+
+@dataclass(frozen=True)
+class ProfileTickResult:
+    name: str
+    display_name: str
+    verified_label: str
+    uid: str
+    username: str
+    canonical_url: str
+    source: str
+    reason: str
+    http_code: int
+    probes: list[dict[str, Any]] = field(default_factory=list)
+    used_cookie: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,7 +245,7 @@ def resolve_profile_name(resolved: ResolvedInput, include_verified: bool = False
                 )
                 continue
             name = extract_profile_name(fetch.text)
-            verified_label = extract_profile_verified_label(fetch.text)
+            verified_label = extract_profile_verified_label(fetch.text, name)
             probe = _probe_record(
                 "profile_name_cookie",
                 url,
@@ -218,6 +276,243 @@ def resolve_profile_name(resolved: ResolvedInput, include_verified: bool = False
         return ProfileNameResult(resolver_name, "resolver_name", "name_found_resolver", probes)
 
     return ProfileNameResult("", "profile_name", "name_not_found", probes)
+
+
+def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) -> ProfileTickResult:
+    value = str(raw_input or "").strip()
+    normalized = normalize_url_input(value)
+    uid = normalize_uid(value) or extract_uid_from_url(normalized)
+    username = extract_username_from_url(normalized)
+    canonical_url = _canonical_profile_tick_url(normalized, uid)
+    probes: list[dict[str, Any]] = []
+    timeout = max(4.0, min(get_config().request_timeout_seconds, 8.0))
+
+    if not force_cookie:
+        public = _resolve_profile_tick_no_cookie(
+            normalized=normalized,
+            uid=uid,
+            username=username,
+            canonical_url=canonical_url,
+            timeout=timeout,
+            probes=probes,
+        )
+        if public.name or public.verified_label:
+            return public
+
+    cookie = _resolve_profile_tick_with_cookie(
+        normalized=normalized,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        timeout=timeout,
+        probes=probes,
+        forced=force_cookie,
+    )
+    if cookie.name or cookie.verified_label or force_cookie:
+        return cookie
+
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label="",
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source="profile_tick",
+        reason="name_and_verified_not_found",
+        http_code=_last_probe_http_code(probes),
+        probes=probes,
+        used_cookie=False,
+    )
+
+
+def _resolve_profile_tick_no_cookie(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+) -> ProfileTickResult:
+    for url, headers, header_label in _public_tick_probe_candidates(normalized, uid, username):
+        fetch = _fetch_limited_text(url, headers, timeout, TICK_PUBLIC_READ_CAP_BYTES)
+        result = _profile_tick_result_from_fetch(
+            fetch=fetch,
+            raw_uid=uid,
+            raw_username=username,
+            fallback_canonical_url=canonical_url,
+            source="profile_tick_no_cookie",
+            reason_prefix="no_cookie",
+            header_label=header_label,
+            used_cookie=False,
+            probes=probes,
+        )
+        if result.name or result.verified_label:
+            return result
+
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label="",
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source="profile_tick_no_cookie",
+        reason="no_cookie_name_and_verified_not_found",
+        http_code=_last_probe_http_code(probes),
+        probes=probes,
+        used_cookie=False,
+    )
+
+
+def _resolve_profile_tick_with_cookie(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+    forced: bool,
+) -> ProfileTickResult:
+    for account in load_cookie_accounts()[:_cookie_account_limit()]:
+        if not account.is_usable:
+            continue
+        for url, headers, header_label in _cookie_tick_probe_candidates(normalized, uid, username, account):
+            fetch = _fetch_limited_text(url, headers, timeout, TICK_COOKIE_READ_CAP_BYTES)
+            result = _profile_tick_result_from_fetch(
+                fetch=fetch,
+                raw_uid=uid,
+                raw_username=username,
+                fallback_canonical_url=canonical_url,
+                source="profile_tick_cookie",
+                reason_prefix="cookie_forced" if forced else "cookie_fallback",
+                header_label=header_label,
+                used_cookie=True,
+                probes=probes,
+                cookie_account=account.masked_id,
+            )
+            if result.name or result.verified_label:
+                return result
+
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label="",
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source="profile_tick_cookie",
+        reason="cookie_name_and_verified_not_found" if forced else "no_cookie_and_cookie_name_verified_not_found",
+        http_code=_last_probe_http_code(probes),
+        probes=probes,
+        used_cookie=True,
+    )
+
+
+def _public_tick_probe_candidates(normalized: str, uid: str, username: str) -> list[tuple[str, dict[str, str], str]]:
+    urls = _profile_tick_urls(normalized, uid, username)
+    rounds = [
+        ("facebookcatalog", _facebook_catalog_headers()),
+        ("facebookexternalhit", _facebook_externalhit_headers()),
+    ]
+    out: list[tuple[str, dict[str, str], str]] = []
+    seen: set[str] = set()
+    for header_label, headers in rounds:
+        for url in urls:
+            key = f"{header_label}|{url}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((url, dict(headers), header_label))
+    return out
+
+
+def _cookie_tick_probe_candidates(normalized: str, uid: str, username: str, account) -> list[tuple[str, dict[str, str], str]]:
+    urls = _profile_tick_urls(normalized, uid, username)
+    headers = _cookie_desktop_headers(account)
+    return [(url, dict(headers), "desktop_logged_in") for url in urls]
+
+
+def _profile_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
+    urls: list[str] = []
+    if normalized:
+        urls.append(normalized)
+        urls.append(_profile_about_url(normalized))
+    if username:
+        safe_username = quote(username.strip("/"), safe=".")
+        urls.extend(
+            [
+                f"https://www.facebook.com/{safe_username}",
+                f"https://www.facebook.com/{safe_username}/about",
+            ]
+        )
+    if uid:
+        urls.extend(
+            [
+                f"https://www.facebook.com/profile.php?id={uid}",
+                f"https://www.facebook.com/profile.php?id={uid}&sk=about",
+            ]
+        )
+    return _unique(urls)
+
+
+def _profile_about_url(url: str) -> str:
+    value = str(url or "").strip().rstrip("/")
+    if not value:
+        return ""
+    if "profile.php" in value:
+        separator = "&" if "?" in value else "?"
+        return f"{value}{separator}sk=about"
+    if "/share/" in value.lower():
+        return value
+    return f"{value}/about"
+
+
+def _profile_tick_result_from_fetch(
+    fetch: FetchResult,
+    raw_uid: str,
+    raw_username: str,
+    fallback_canonical_url: str,
+    source: str,
+    reason_prefix: str,
+    header_label: str,
+    used_cookie: bool,
+    probes: list[dict[str, Any]],
+    cookie_account: str = "",
+) -> ProfileTickResult:
+    name = extract_profile_name(fetch.text)
+    verified_label = extract_profile_verified_label(fetch.text, name)
+    display_name = _display_profile_name_value(name)
+    uid = raw_uid or extract_uid_from_url(fetch.final_url)
+    username = raw_username or extract_username_from_url(fetch.final_url)
+    canonical_url = fetch.final_url or fallback_canonical_url
+    reason = _profile_tick_reason(reason_prefix, name, verified_label, fetch.reason)
+    probe = _probe_record(
+        source,
+        canonical_url,
+        fetch,
+        name,
+        cookie_account=cookie_account,
+        reason=reason,
+        header_label=header_label,
+        verified_label=verified_label,
+    )
+    probe["usedCookie"] = used_cookie
+    probes.append(probe)
+
+    return ProfileTickResult(
+        name=display_name or name,
+        display_name=display_name,
+        verified_label=verified_label,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source=source,
+        reason=reason,
+        http_code=fetch.http_code,
+        probes=probes,
+        used_cookie=used_cookie,
+    )
 
 
 def _known_profile_name(uid: str) -> str:
@@ -299,19 +594,29 @@ def extract_profile_name(html: str) -> str:
     return ""
 
 
-def extract_profile_verified_label(html: str) -> str:
+def extract_profile_verified_label(html: str, profile_name: str = "") -> str:
     text = str(html or "")
     if not text:
         return ""
 
-    lowered = text.lower()
-    if "verified account" in lowered:
+    label_from_name = _verified_label_from_name(profile_name)
+    if label_from_name:
+        return label_from_name
+
+    header = text[:650000]
+    lowered = header.lower()
+    if "verified account" in lowered and _verified_marker_is_scoped(header, "verified account", profile_name):
         return "Verified account"
-    if "t\u00e0i kho\u1ea3n \u0111\u00e3 x\u00e1c minh" in lowered:
+    if "t\u00e0i kho\u1ea3n \u0111\u00e3 x\u00e1c minh" in lowered and _verified_marker_is_scoped(
+        header,
+        "t\u00e0i kho\u1ea3n \u0111\u00e3 x\u00e1c minh",
+        profile_name,
+    ):
         return VERIFIED_ACCOUNT_LABEL
 
     for pattern in VERIFIED_MARKER_PATTERNS:
-        if pattern.search(text):
+        match = pattern.search(header)
+        if match and _verified_window_is_profile_context(header, match.start(), profile_name):
             return VERIFIED_ACCOUNT_LABEL
     return ""
 
@@ -346,6 +651,54 @@ def clean_profile_name_candidate(raw_name: str) -> str:
     name = re.sub(r"\s+[|·\-]\s+Facebook\s*$", "", name, flags=re.IGNORECASE).strip()
     name = re.sub(r"^\(\d+\)\s*", "", name).strip()
     return name
+
+
+def _display_profile_name_value(name: str) -> str:
+    value = clean_profile_name_candidate(name)
+    for marker in (
+        "Tài khoản đã xác minh",
+        "Verified account",
+        "TÃ i khoáº£n Ä‘Ã£ xÃ¡c minh",
+    ):
+        value = value.replace(marker, "").strip()
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _verified_label_from_name(name: str) -> str:
+    lowered = str(name or "").lower()
+    if "verified account" in lowered:
+        return "Verified account"
+    if "tài khoản đã xác minh" in lowered or "tÃ i khoáº£n Ä‘Ã£ xÃ¡c minh" in lowered:
+        return VERIFIED_ACCOUNT_LABEL
+    return ""
+
+
+def _verified_marker_is_scoped(header: str, marker: str, profile_name: str = "") -> bool:
+    lowered = header.lower()
+    marker_lower = marker.lower()
+    index = lowered.find(marker_lower)
+    while index >= 0:
+        if _verified_window_is_profile_context(header, index, profile_name):
+            return True
+        index = lowered.find(marker_lower, index + len(marker_lower))
+    return False
+
+
+def _verified_window_is_profile_context(header: str, marker_index: int, profile_name: str = "") -> bool:
+    window = header[max(0, marker_index - 90000): min(len(header), marker_index + 90000)]
+    lowered = window.lower()
+    if any(marker in lowered for marker in COMMENT_CONTEXT_MARKERS):
+        return False
+    if any(marker in lowered for marker in PROFILE_HEADER_CONTEXT_MARKERS):
+        return True
+
+    clean_name = _display_profile_name_value(profile_name)
+    if clean_name:
+        name_index = header.find(clean_name)
+        if 0 <= name_index <= 220000 and abs(marker_index - name_index) <= 180000:
+            return True
+
+    return marker_index <= 180000
 
 
 def clear_profile_name_cache() -> None:
@@ -388,6 +741,22 @@ def _public_headers() -> dict[str, str]:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
     }
+
+
+def _facebook_catalog_headers() -> dict[str, str]:
+    headers = _public_headers()
+    headers["User-Agent"] = "facebookcatalog/1.0"
+    headers["Cache-Control"] = "no-cache"
+    headers["Pragma"] = "no-cache"
+    return headers
+
+
+def _facebook_externalhit_headers() -> dict[str, str]:
+    headers = _public_headers()
+    headers["User-Agent"] = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+    headers["Cache-Control"] = "no-cache"
+    headers["Pragma"] = "no-cache"
+    return headers
 
 
 def _cookie_mobile_headers(account) -> dict[str, str]:
@@ -436,6 +805,40 @@ def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchRe
         )
 
 
+def _fetch_limited_text(url: str, headers: Mapping[str, str], timeout: float, max_bytes: int) -> FetchResult:
+    try:
+        response = requests.get(
+            url,
+            headers=dict(headers),
+            timeout=timeout,
+            allow_redirects=True,
+            stream=True,
+        )
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= max_bytes:
+                break
+        text = b"".join(chunks).decode(response.encoding or "utf-8", errors="ignore")
+        return FetchResult(
+            http_code=response.status_code,
+            text=text,
+            final_url=response.url or url,
+            reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
+        )
+    except requests.RequestException as exc:
+        return FetchResult(
+            http_code=0,
+            text="",
+            final_url=url,
+            reason=f"request_error:{type(exc).__name__}",
+        )
+
+
 def _probe_record(
     source: str,
     url: str,
@@ -461,6 +864,31 @@ def _probe_record(
     if verified_label:
         item["verifiedLabel"] = verified_label
     return item
+
+
+def _profile_tick_reason(reason_prefix: str, name: str, verified_label: str, fetch_reason: str) -> str:
+    if name and verified_label:
+        return f"{reason_prefix}_name_and_verified_found"
+    if name:
+        return f"{reason_prefix}_name_found"
+    if verified_label:
+        return f"{reason_prefix}_verified_found"
+    return f"{reason_prefix}_{fetch_reason or 'not_found'}"
+
+
+def _last_probe_http_code(probes: list[dict[str, Any]]) -> int:
+    for probe in reversed(probes):
+        try:
+            return int(probe.get("httpCode") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _canonical_profile_tick_url(normalized: str, uid: str) -> str:
+    if uid:
+        return f"https://www.facebook.com/profile.php?id={uid}"
+    return str(normalized or "").strip()
 
 
 def _cookie_first_urls(urls: list[str]) -> list[str]:
