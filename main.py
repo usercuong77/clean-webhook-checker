@@ -17,10 +17,16 @@ from app_modules.api.controller import (
     viplike_packages_input,
 )
 from app_modules.core.config import get_config
+from app_modules.core.render_registration import schedule_render_registration
 from app_modules.telegram.telegram_relay import relay_status, relay_telegram_webhook
 
 
 app = FastAPI(title="Clean Webhook Checker", version="step16-clean-webhook-checker-local")
+
+
+@app.on_event("startup")
+def startup_register_render_service() -> None:
+    schedule_render_registration()
 
 
 def require_api_key(x_api_key: str | None) -> None:
