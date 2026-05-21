@@ -373,9 +373,10 @@ def _resolve_profile_tick_with_cookie(
 ) -> ProfileTickResult:
     best_name_result: ProfileTickResult | None = None
     seen_unwrapped: set[str] = set()
-    for account in load_cookie_accounts()[:_cookie_account_limit()]:
+    for account in load_cookie_accounts()[:_tick_cookie_account_limit(forced)]:
         if not account.is_usable:
             continue
+        account_name_result: ProfileTickResult | None = None
         for url, headers, header_label in _cookie_tick_probe_candidates(normalized, uid, username, account):
             results = _profile_tick_results_from_candidate(
                 url=url,
@@ -396,8 +397,13 @@ def _resolve_profile_tick_with_cookie(
             for result in results:
                 if result.verified_label:
                     return result
-                if result.name and best_name_result is None:
-                    best_name_result = result
+                if result.name and account_name_result is None:
+                    account_name_result = result
+        if account_name_result:
+            if not forced:
+                return account_name_result
+            if best_name_result is None:
+                best_name_result = account_name_result
 
     if best_name_result:
         return best_name_result
@@ -418,27 +424,27 @@ def _resolve_profile_tick_with_cookie(
 
 
 def _public_tick_probe_candidates(normalized: str, uid: str, username: str) -> list[tuple[str, dict[str, str], str]]:
-    urls = _profile_tick_urls(normalized, uid, username)
-    rounds = [
-        ("facebookcatalog", _facebook_catalog_headers()),
-        ("facebookexternalhit", _facebook_externalhit_headers()),
-    ]
+    urls = _fast_profile_tick_urls(normalized, uid, username)
+    headers = _facebook_catalog_headers()
     out: list[tuple[str, dict[str, str], str]] = []
     seen: set[str] = set()
-    for header_label, headers in rounds:
-        for url in urls:
-            key = f"{header_label}|{url}"
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append((url, dict(headers), header_label))
+    for url in urls:
+        key = f"facebookcatalog|{url}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((url, dict(headers), "facebookcatalog"))
     return out
 
 
 def _cookie_tick_probe_candidates(normalized: str, uid: str, username: str, account) -> list[tuple[str, dict[str, str], str]]:
-    urls = _profile_tick_urls(normalized, uid, username)
+    urls = _fast_profile_tick_urls(normalized, uid, username)
     headers = _cookie_desktop_headers(account)
     return [(url, dict(headers), "desktop_logged_in") for url in urls]
+
+
+def _fast_profile_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
+    return _profile_tick_urls(normalized, uid, username)[:2]
 
 
 def _profile_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
@@ -1064,6 +1070,15 @@ def _cookie_account_limit() -> int:
         return max(0, int(os.getenv("PROFILE_NAME_COOKIE_ACCOUNT_LIMIT", "2")))
     except ValueError:
         return 2
+
+
+def _tick_cookie_account_limit(forced: bool) -> int:
+    configured = _cookie_account_limit()
+    if configured <= 0:
+        return 0
+    if forced:
+        return configured
+    return 1
 
 
 def _unique(items: list[str]) -> list[str]:
