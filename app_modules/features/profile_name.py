@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, unquote, urlparse, urlunparse
 
 import requests
 
@@ -276,6 +276,12 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         )
         if public.name or public.verified_label:
             return public
+        unwrapped = _first_login_next_target_from_probes(probes)
+        if unwrapped:
+            normalized = unwrapped
+            uid = extract_uid_from_url(normalized) or uid
+            username = extract_username_from_url(normalized) or username
+            canonical_url = _canonical_profile_tick_url(normalized, uid)
 
     cookie = _resolve_profile_tick_with_cookie(
         normalized=normalized,
@@ -287,6 +293,8 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         forced=force_cookie,
     )
     if cookie.name or cookie.verified_label or force_cookie:
+        return cookie
+    if cookie.used_cookie:
         return cookie
 
     return ProfileTickResult(
@@ -313,10 +321,13 @@ def _resolve_profile_tick_no_cookie(
     probes: list[dict[str, Any]],
 ) -> ProfileTickResult:
     best_name_result: ProfileTickResult | None = None
+    seen_unwrapped: set[str] = set()
     for url, headers, header_label in _public_tick_probe_candidates(normalized, uid, username):
-        fetch = _fetch_limited_text(url, headers, timeout, TICK_PUBLIC_READ_CAP_BYTES)
-        result = _profile_tick_result_from_fetch(
-            fetch=fetch,
+        results = _profile_tick_results_from_candidate(
+            url=url,
+            headers=headers,
+            timeout=timeout,
+            max_bytes=TICK_PUBLIC_READ_CAP_BYTES,
             raw_uid=uid,
             raw_username=username,
             fallback_canonical_url=canonical_url,
@@ -325,11 +336,13 @@ def _resolve_profile_tick_no_cookie(
             header_label=header_label,
             used_cookie=False,
             probes=probes,
+            seen_unwrapped=seen_unwrapped,
         )
-        if result.verified_label:
-            return result
-        if result.name and best_name_result is None:
-            best_name_result = result
+        for result in results:
+            if result.verified_label:
+                return result
+            if result.name and best_name_result is None:
+                best_name_result = result
 
     if best_name_result:
         return best_name_result
@@ -359,13 +372,16 @@ def _resolve_profile_tick_with_cookie(
     forced: bool,
 ) -> ProfileTickResult:
     best_name_result: ProfileTickResult | None = None
+    seen_unwrapped: set[str] = set()
     for account in load_cookie_accounts()[:_cookie_account_limit()]:
         if not account.is_usable:
             continue
         for url, headers, header_label in _cookie_tick_probe_candidates(normalized, uid, username, account):
-            fetch = _fetch_limited_text(url, headers, timeout, TICK_COOKIE_READ_CAP_BYTES)
-            result = _profile_tick_result_from_fetch(
-                fetch=fetch,
+            results = _profile_tick_results_from_candidate(
+                url=url,
+                headers=headers,
+                timeout=timeout,
+                max_bytes=TICK_COOKIE_READ_CAP_BYTES,
                 raw_uid=uid,
                 raw_username=username,
                 fallback_canonical_url=canonical_url,
@@ -375,11 +391,13 @@ def _resolve_profile_tick_with_cookie(
                 used_cookie=True,
                 probes=probes,
                 cookie_account=account.masked_id,
+                seen_unwrapped=seen_unwrapped,
             )
-            if result.verified_label:
-                return result
-            if result.name and best_name_result is None:
-                best_name_result = result
+            for result in results:
+                if result.verified_label:
+                    return result
+                if result.name and best_name_result is None:
+                    best_name_result = result
 
     if best_name_result:
         return best_name_result
@@ -392,7 +410,7 @@ def _resolve_profile_tick_with_cookie(
         username=username,
         canonical_url=canonical_url,
         source="profile_tick_cookie",
-        reason="cookie_name_and_verified_not_found" if forced else "no_cookie_and_cookie_name_verified_not_found",
+        reason="cookie_name_and_verified_not_found" if forced else "no_cookie_and_cookie_name_not_found",
         http_code=_last_probe_http_code(probes),
         probes=probes,
         used_cookie=True,
@@ -503,6 +521,118 @@ def _profile_tick_result_from_fetch(
         probes=probes,
         used_cookie=used_cookie,
     )
+
+
+def _profile_tick_results_from_candidate(
+    url: str,
+    headers: Mapping[str, str],
+    timeout: float,
+    max_bytes: int,
+    raw_uid: str,
+    raw_username: str,
+    fallback_canonical_url: str,
+    source: str,
+    reason_prefix: str,
+    header_label: str,
+    used_cookie: bool,
+    probes: list[dict[str, Any]],
+    cookie_account: str = "",
+    seen_unwrapped: set[str] | None = None,
+) -> list[ProfileTickResult]:
+    fetch = _fetch_limited_text(url, headers, timeout, max_bytes)
+    results = [
+        _profile_tick_result_from_fetch(
+            fetch=fetch,
+            raw_uid=raw_uid,
+            raw_username=raw_username,
+            fallback_canonical_url=fallback_canonical_url,
+            source=source,
+            reason_prefix=reason_prefix,
+            header_label=header_label,
+            used_cookie=used_cookie,
+            probes=probes,
+            cookie_account=cookie_account,
+        )
+    ]
+
+    target = _login_next_profile_target(fetch.final_url)
+    if not target:
+        return results
+    seen = seen_unwrapped if seen_unwrapped is not None else set()
+    key = target.lower()
+    if key in seen:
+        return results
+    seen.add(key)
+
+    retry_fetch = _fetch_limited_text(target, headers, timeout, max_bytes)
+    results.append(
+        _profile_tick_result_from_fetch(
+            fetch=retry_fetch,
+            raw_uid=raw_uid or extract_uid_from_url(target),
+            raw_username=raw_username or extract_username_from_url(target),
+            fallback_canonical_url=target,
+            source=source,
+            reason_prefix=f"{reason_prefix}_login_next",
+            header_label=header_label,
+            used_cookie=used_cookie,
+            probes=probes,
+            cookie_account=cookie_account,
+        )
+    )
+    probes[-1]["loginNextTarget"] = target
+    return results
+
+
+def _first_login_next_target_from_probes(probes: list[dict[str, Any]]) -> str:
+    for probe in probes:
+        target = str(probe.get("loginNextTarget") or "").strip()
+        if target:
+            return target
+        for key in ("finalUrl", "url"):
+            target = _login_next_profile_target(str(probe.get(key) or ""))
+            if target:
+                return target
+    return ""
+
+
+def _login_next_profile_target(url: str) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    host = parsed.netloc.lower()
+    if not host.endswith("facebook.com"):
+        return ""
+    if not parsed.path.lower().startswith("/login"):
+        return ""
+    params = parse_qs(parsed.query)
+    for raw_target in params.get("next", []):
+        target = _clean_login_next_target(raw_target)
+        if target:
+            return target
+    return ""
+
+
+def _clean_login_next_target(raw_target: str) -> str:
+    value = html_lib.unescape(unquote(str(raw_target or "").strip()))
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    host = parsed.netloc.lower()
+    if not host.endswith("facebook.com"):
+        return ""
+    path = parsed.path or "/"
+    lower_path = path.lower()
+    if lower_path.startswith("/login") or lower_path.startswith("/share"):
+        return ""
+    if "profile.php" in lower_path:
+        uid = extract_uid_from_url(value)
+        if uid:
+            return f"https://www.facebook.com/profile.php?id={uid}"
+    clean_path = path.rstrip("/") or "/"
+    if clean_path == "/":
+        return ""
+    return urlunparse(("https", "www.facebook.com", clean_path, "", "", ""))
 
 
 def _known_profile_name(uid: str) -> str:

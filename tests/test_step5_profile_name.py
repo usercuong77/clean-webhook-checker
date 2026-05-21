@@ -224,6 +224,97 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result["checkTickMode"], "cookie")
         self.assertEqual(fetch_limited.call_count, 2)
 
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_retries_login_next_target_before_cookie_fallback(
+        self,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        target = "https://www.facebook.com/thanh.duyen.37570"
+        login_url = (
+            "https://www.facebook.com/login/?next="
+            "https%3A%2F%2Fwww.facebook.com%2Fthanh.duyen.37570%3Frdid%3Dabc"
+            "%26share_url%3Dhttps%253A%252F%252Fwww.facebook.com%252Fshare%252F1BUu51wPpb%252F"
+        )
+        load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [("https://www.facebook.com/share/1BUu51wPpb/", {}, "public")]
+        cookie_candidates.return_value = [(target, {}, "cookie")]
+        fetch_limited.side_effect = [
+            _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
+            _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
+            _fetch_result(200, '<meta property="og:title" content="Thanh Duyen">', target, "ok"),
+        ]
+
+        result = check_tick_input(
+            CheckRequest(input="https://www.facebook.com/share/1BUu51wPpb/", mode="1", includeName=True)
+        )
+
+        self.assertEqual(result["status"], "LIVE")
+        self.assertEqual(result["name"], "Thanh Duyen")
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "cookie")
+        self.assertEqual(cookie_candidates.call_args.args[0], target)
+        self.assertEqual(fetch_limited.call_count, 3)
+
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_force_cookie_retries_login_next_target(self, fetch_limited, load_accounts, cookie_candidates):
+        target = "https://www.facebook.com/thanh.duyen.37570"
+        login_url = "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Fthanh.duyen.37570"
+        load_accounts.return_value = [_cookie_account()]
+        cookie_candidates.return_value = [("https://www.facebook.com/share/1BUu51wPpb/", {}, "cookie")]
+        fetch_limited.side_effect = [
+            _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
+            _fetch_result(200, '<meta property="og:title" content="Thanh Duyen Verified account">', target, "ok"),
+        ]
+
+        result = check_tick_input(
+            CheckRequest(
+                input="https://www.facebook.com/share/1BUu51wPpb/",
+                mode="1",
+                includeName=True,
+                forceCookie=True,
+            )
+        )
+
+        self.assertEqual(result["name"], "Thanh Duyen")
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "cookie")
+        self.assertEqual(fetch_limited.call_count, 2)
+
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_reports_cookie_fallback_failure_reason(
+        self,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [("https://www.facebook.com/no.name", {}, "public")]
+        cookie_candidates.return_value = [("https://www.facebook.com/no.name", {}, "cookie")]
+        fetch_limited.side_effect = [
+            _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/no.name", "ok"),
+            _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/no.name", "ok"),
+        ]
+
+        result = check_tick_input(CheckRequest(input="https://www.facebook.com/no.name", mode="1", includeName=True))
+
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "cookie")
+        self.assertEqual(result["reason"], "no_cookie_and_cookie_name_not_found")
+
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
     def test_checktick_force_cookie_skips_no_cookie(self, fetch_limited, load_accounts):
