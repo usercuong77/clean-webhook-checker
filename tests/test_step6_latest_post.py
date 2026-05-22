@@ -16,6 +16,8 @@ from app_modules.features.latest_post import (
     is_trusted_no_cookie_latest_post,
     parse_latest_post_from_html,
     _fetch_text,
+    _cookie_account_limit,
+    _max_probe_attempts,
 )
 from app_modules.resolvers.uid_resolver import ResolvedInput
 
@@ -45,6 +47,11 @@ class Step6LatestPostTests(unittest.TestCase):
 
         self.assertTrue(candidates[0].has_cookie)
         self.assertEqual(candidates[-1].source, "no_cookie")
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_latest_post_probe_defaults_are_capped_for_realtime(self):
+        self.assertEqual(_max_probe_attempts(), 6)
+        self.assertEqual(_cookie_account_limit(), 2)
 
     def test_no_cookie_rejects_field_exception_without_timestamp(self):
         self.assertFalse(

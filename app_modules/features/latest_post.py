@@ -1243,9 +1243,9 @@ def _request_timeout() -> float:
 
 def _max_probe_attempts() -> int:
     try:
-        return max(4, int(os.getenv("LATEST_POST_MAX_PROBE_ATTEMPTS", "18")))
+        return max(3, int(os.getenv("LATEST_POST_MAX_PROBE_ATTEMPTS", "6")))
     except ValueError:
-        return 18
+        return 6
 
 
 def _max_response_bytes() -> int:
@@ -1290,9 +1290,9 @@ def _stream_fetch_deadline_seconds() -> float:
 
 def _cookie_account_limit() -> int:
     try:
-        return max(0, int(os.getenv("LATEST_POST_COOKIE_ACCOUNT_LIMIT", "5")))
+        return max(0, int(os.getenv("LATEST_POST_COOKIE_ACCOUNT_LIMIT", "2")))
     except ValueError:
-        return 5
+        return 2
 
 
 def _is_auth_wall(body_low: str, final_url: str) -> bool:
