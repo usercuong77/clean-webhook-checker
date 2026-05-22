@@ -408,6 +408,37 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result["checkTickMode"], "cookie")
         self.assertEqual(result["reason"], "no_cookie_and_cookie_name_not_found")
 
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_public_unavailable_skips_cookie_fallback(
+        self,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [("https://www.facebook.com/missing.profile", {}, "public")]
+        cookie_candidates.return_value = [("https://www.facebook.com/missing.profile", {}, "cookie")]
+        fetch_limited.return_value = _fetch_result(
+            200,
+            "This content isn't available right now",
+            "https://www.facebook.com/missing.profile",
+            "ok",
+        )
+
+        result = check_tick_input(CheckRequest(input="https://www.facebook.com/missing.profile", mode="1"))
+
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertFalse(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "no_cookie")
+        self.assertEqual(result["reason"], "no_cookie_content_unavailable")
+        self.assertEqual(fetch_limited.call_count, 1)
+        self.assertEqual(load_accounts.call_count, 0)
+        self.assertEqual(cookie_candidates.call_count, 0)
+
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
     def test_checktick_force_cookie_skips_no_cookie(self, fetch_limited, load_accounts):

@@ -116,8 +116,8 @@ COMMENT_CONTEXT_MARKERS = (
     "feedback_comment",
     "comment_list",
 )
-TICK_PUBLIC_READ_CAP_BYTES = 1_800_000
-TICK_COOKIE_READ_CAP_BYTES = 2_800_000
+TICK_PUBLIC_READ_CAP_BYTES = 750_000
+TICK_COOKIE_READ_CAP_BYTES = 950_000
 PROFILE_TICK_VERIFIED_MARKERS = (
     "verified account",
     "tài khoản đã xác minh",
@@ -263,7 +263,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
     username = extract_username_from_url(normalized)
     canonical_url = _canonical_profile_tick_url(normalized, uid)
     probes: list[dict[str, Any]] = []
-    timeout = max(4.0, min(get_config().request_timeout_seconds, 8.0))
+    timeout = _profile_tick_request_timeout(force_cookie)
 
     if not force_cookie:
         public = _resolve_profile_tick_no_cookie(
@@ -275,6 +275,8 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
             probes=probes,
         )
         if public.name or public.verified_label:
+            return public
+        if _public_tick_miss_is_terminal(public):
             return public
         unwrapped = _first_login_next_target_from_probes(probes)
         if unwrapped:
@@ -340,6 +342,8 @@ def _resolve_profile_tick_no_cookie(
         )
         for result in results:
             if result.verified_label:
+                return result
+            if _public_tick_miss_is_terminal(result):
                 return result
             if result.name and best_name_result is None:
                 best_name_result = result
@@ -500,7 +504,7 @@ def _profile_tick_result_from_fetch(
     uid = raw_uid or extract_uid_from_url(fetch.final_url)
     username = raw_username or extract_username_from_url(fetch.final_url)
     canonical_url = fetch.final_url or fallback_canonical_url
-    reason = _profile_tick_reason(reason_prefix, name, verified_label, fetch.reason)
+    reason = _profile_tick_reason(reason_prefix, name, verified_label, fetch)
     probe = _probe_record(
         source,
         canonical_url,
@@ -933,29 +937,29 @@ def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchRe
 
 def _fetch_limited_text(url: str, headers: Mapping[str, str], timeout: float, max_bytes: int) -> FetchResult:
     try:
-        response = requests.get(
+        with requests.get(
             url,
             headers=dict(headers),
-            timeout=timeout,
+            timeout=_requests_timeout(timeout),
             allow_redirects=True,
             stream=True,
-        )
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in response.iter_content(chunk_size=65536):
-            if not chunk:
-                continue
-            chunks.append(chunk)
-            total += len(chunk)
-            if total >= max_bytes:
-                break
-        text = b"".join(chunks).decode(response.encoding or "utf-8", errors="ignore")
-        return FetchResult(
-            http_code=response.status_code,
-            text=text,
-            final_url=response.url or url,
-            reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
-        )
+        ) as response:
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=32768):
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                total += len(chunk)
+                if total >= max_bytes:
+                    break
+            text = b"".join(chunks).decode(response.encoding or "utf-8", errors="ignore")
+            return FetchResult(
+                http_code=response.status_code,
+                text=text,
+                final_url=response.url or url,
+                reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
+            )
     except requests.RequestException as exc:
         return FetchResult(
             http_code=0,
@@ -992,14 +996,63 @@ def _probe_record(
     return item
 
 
-def _profile_tick_reason(reason_prefix: str, name: str, verified_label: str, fetch_reason: str) -> str:
+def _profile_tick_reason(reason_prefix: str, name: str, verified_label: str, fetch: FetchResult) -> str:
     if name and verified_label:
         return f"{reason_prefix}_name_and_verified_found"
     if name:
         return f"{reason_prefix}_name_found"
     if verified_label:
         return f"{reason_prefix}_verified_found"
-    return f"{reason_prefix}_{fetch_reason or 'not_found'}"
+    unavailable_reason = _profile_tick_unavailable_reason(fetch)
+    if unavailable_reason:
+        return f"{reason_prefix}_{unavailable_reason}"
+    return f"{reason_prefix}_{fetch.reason or 'not_found'}"
+
+
+def _profile_tick_request_timeout(force_cookie: bool) -> float:
+    env_key = "PROFILE_TICK_FORCE_COOKIE_TIMEOUT_SEC" if force_cookie else "PROFILE_TICK_TIMEOUT_SEC"
+    default_value = 4.0 if force_cookie else 2.5
+    try:
+        configured = float(os.getenv(env_key, str(default_value)))
+    except ValueError:
+        configured = default_value
+    return max(1.0, min(configured, 6.0 if force_cookie else 4.0))
+
+
+def _requests_timeout(timeout: float) -> tuple[float, float]:
+    read_timeout = max(1.0, float(timeout))
+    connect_timeout = max(0.6, min(1.2, read_timeout / 2))
+    return (connect_timeout, read_timeout)
+
+
+def _public_tick_miss_is_terminal(result: ProfileTickResult) -> bool:
+    if result.name or result.verified_label or result.used_cookie:
+        return False
+    reason = str(result.reason or "").lower()
+    return any(
+        marker in reason
+        for marker in (
+            "profile_unavailable",
+            "content_unavailable",
+            "page_not_found",
+            "http_404",
+        )
+    )
+
+
+def _profile_tick_unavailable_reason(fetch: FetchResult) -> str:
+    if fetch.http_code == 404:
+        return "http_404"
+    text = f"{fetch.final_url}\n{fetch.text[:350000]}".lower()
+    if "this content isn't available" in text or "content isn't available" in text:
+        return "content_unavailable"
+    if "this page isn't available" in text or "page isn't available" in text or "page not found" in text:
+        return "page_not_found"
+    if "the link you followed may be broken" in text or "page may have been removed" in text:
+        return "profile_unavailable"
+    if "nội dung này hiện không hiển thị" in text or "trang này không hiển thị" in text:
+        return "content_unavailable"
+    return ""
 
 
 def _last_probe_http_code(probes: list[dict[str, Any]]) -> int:
