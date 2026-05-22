@@ -34,6 +34,8 @@ REMOTE_COOKIE_POOL_SECRET_KEYS = (
     "COOKIE_POOL_SECRET",
     "RENDER_REGISTRATION_SECRET",
     "UID_CHECKER_API_KEY",
+    "SMM_API_KEY",
+    "VIPLIKE_SMM_API_KEY",
 )
 
 DEFAULT_LOCAL_COOKIE_FILE = Path(__file__).resolve().parents[2] / "local_secrets" / "facebook_cookies.txt"
