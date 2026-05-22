@@ -120,7 +120,7 @@ def check_tick_input(req: CheckRequest) -> dict[str, Any]:
     tick = resolve_profile_tick_from_input(raw_input, force_cookie=bool(req.forceCookie))
     name = tick.name
     verified_label = tick.verified_label or _verified_account_label(name)
-    status: Status = "LIVE" if name or verified_label else "UNKNOWN"
+    status: Status = _profile_tick_status(name, verified_label, tick.reason, tick.http_code)
     elapsed_ms = int((perf_counter() - started) * 1000)
     return {
         "ok": True,
@@ -146,6 +146,23 @@ def check_tick_input(req: CheckRequest) -> dict[str, Any]:
         "checkTickMode": "cookie" if tick.used_cookie else "no_cookie",
         "resolverDebug": {},
     }
+
+
+def _profile_tick_status(name: str, verified_label: str, reason: str, http_code: int) -> Status:
+    if name or verified_label:
+        return "LIVE"
+    normalized_reason = str(reason or "").lower()
+    terminal_reasons = (
+        "content_unavailable",
+        "page_not_found",
+        "profile_unavailable",
+        "http_404",
+        "no_cookie_and_cookie_name_not_found",
+        "cookie_name_and_verified_not_found",
+    )
+    if int(http_code or 0) in {200, 404} and any(marker in normalized_reason for marker in terminal_reasons):
+        return "DIE"
+    return "UNKNOWN"
 
 
 def _profile_name_lookup_enabled() -> bool:

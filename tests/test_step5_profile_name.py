@@ -305,7 +305,7 @@ class Step5ProfileNameTests(unittest.TestCase):
             CheckRequest(input="https://www.facebook.com/no.public.name", mode="1", includeName=True)
         )
 
-        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["status"], "DIE")
         self.assertFalse(result["verified"])
         self.assertTrue(result["usedCookie"])
         self.assertEqual(result["reason"], "no_cookie_and_cookie_name_not_found")
@@ -439,7 +439,7 @@ class Step5ProfileNameTests(unittest.TestCase):
 
         result = check_tick_input(CheckRequest(input="https://www.facebook.com/no.name", mode="1", includeName=True))
 
-        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["status"], "DIE")
         self.assertTrue(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "cookie")
         self.assertEqual(result["reason"], "no_cookie_and_cookie_name_not_found")
@@ -467,7 +467,7 @@ class Step5ProfileNameTests(unittest.TestCase):
 
         result = check_tick_input(CheckRequest(input="https://www.facebook.com/missing.profile", mode="1"))
 
-        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["status"], "DIE")
         self.assertFalse(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "no_cookie")
         self.assertEqual(result["reason"], "no_cookie_content_unavailable")
