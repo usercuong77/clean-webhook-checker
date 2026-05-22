@@ -418,6 +418,30 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertIn("Streamed post content", fetch.text)
         self.assertNotIn("tail-that-should-not-be-read", fetch.text)
 
+    @patch.dict(
+        "os.environ",
+        {
+            "LATEST_POST_STREAM_CHECK_INTERVAL_BYTES": "65536",
+            "LATEST_POST_STREAM_FETCH_DEADLINE_SEC": "4",
+            "LATEST_POST_MAX_RESPONSE_BYTES": "300000",
+        },
+    )
+    @patch("app_modules.features.latest_post.perf_counter", side_effect=[0.0, 5.0])
+    @patch("app_modules.features.latest_post.requests.get")
+    def test_fetch_text_stops_at_total_stream_deadline(self, get, perf_counter):
+        get.return_value = _stream_response(
+            [
+                b"x" * 70000,
+                b"tail-that-should-not-be-read",
+            ]
+        )
+
+        fetch = _fetch_text("https://www.facebook.com/test.user?sk=posts", {"User-Agent": "test"}, 7)
+
+        self.assertEqual(fetch.http_code, 200)
+        self.assertNotIn("tail-that-should-not-be-read", fetch.text)
+        self.assertGreaterEqual(perf_counter.call_count, 2)
+
 
 def _resolved(uid="", username="", resolver_name=""):
     return ResolvedInput(

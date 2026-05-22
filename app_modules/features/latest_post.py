@@ -5,6 +5,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlsplit, urlunsplit
 
@@ -1051,6 +1052,8 @@ def _read_response_text_limited(response: requests.Response) -> str:
     total = 0
     next_check_at = _stream_check_interval_bytes()
     encoding = response.encoding or "utf-8"
+    started = perf_counter()
+    fetch_deadline = _stream_fetch_deadline_seconds()
 
     for chunk in response.iter_content(chunk_size=65536):
         if not chunk:
@@ -1070,6 +1073,9 @@ def _read_response_text_limited(response: requests.Response) -> str:
             if _has_enough_latest_post_payload_for_stream_stop(text, total):
                 return text
             next_check_at += _stream_check_interval_bytes()
+
+        if perf_counter() - started >= fetch_deadline:
+            break
 
         if total >= max_bytes:
             break
@@ -1264,6 +1270,14 @@ def _stream_stop_after_post_bytes() -> int:
     except ValueError:
         configured = 1_800_000
     return max(800_000, min(configured, _max_response_bytes()))
+
+
+def _stream_fetch_deadline_seconds() -> float:
+    try:
+        configured = float(os.getenv("LATEST_POST_STREAM_FETCH_DEADLINE_SEC", "12"))
+    except ValueError:
+        configured = 12.0
+    return max(4.0, min(configured, 30.0))
 
 
 def _cookie_account_limit() -> int:

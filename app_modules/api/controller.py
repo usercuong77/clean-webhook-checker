@@ -393,7 +393,7 @@ def _realtime_bulk_uid_worker_count(job_count: int) -> int:
 
 def _realtime_bulk_post_worker_count(job_count: int) -> int:
     try:
-        configured = int(os.getenv("REALTIME_BULK_POST_MAX_WORKERS", "5"))
+        configured = int(os.getenv("REALTIME_BULK_POST_MAX_WORKERS", "2"))
     except ValueError:
-        configured = 5
+        configured = 2
     return max(1, min(job_count, configured))
