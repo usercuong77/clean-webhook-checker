@@ -33,9 +33,13 @@ REMOTE_COOKIE_POOL_SECRET_KEYS = (
     "UID_CHECKER_REMOTE_COOKIE_POOL_SECRET",
     "COOKIE_POOL_SECRET",
     "RENDER_REGISTRATION_SECRET",
+    "UID_CHECKER_API_KEY",
 )
 
 DEFAULT_LOCAL_COOKIE_FILE = Path(__file__).resolve().parents[2] / "local_secrets" / "facebook_cookies.txt"
+DEFAULT_REMOTE_COOKIE_POOL_URL = (
+    "https://clean-telegram-cloudflare-gateway.0987654321ct0987654321.workers.dev/admin/cookies/pool"
+)
 
 _REMOTE_CACHE: dict[str, Any] = {"expires_at": 0.0, "accounts": []}
 
@@ -240,7 +244,7 @@ def _remote_cookie_pool_url(environ: Mapping[str, str]) -> str:
 
     register_url = str(environ.get("CLOUDFLARE_RENDER_REGISTER_URL", "") or "").strip()
     if not register_url:
-        return ""
+        return DEFAULT_REMOTE_COOKIE_POOL_URL
 
     try:
         parsed = urlparse(register_url)
