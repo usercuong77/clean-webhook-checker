@@ -265,6 +265,7 @@ def realtime_check_bulk(req: RealtimeBulkRequest) -> dict[str, Any]:
     jobs = list(req.jobs or [])
     results: list[dict[str, Any] | None] = [None] * len(jobs)
     uid_tasks: list[tuple[int, RealtimeBulkJob, str, str]] = []
+    post_tasks: list[tuple[int, RealtimeBulkJob, str, str]] = []
 
     for index, job in enumerate(jobs):
         job_id = (job.id or f"job_{index + 1}").strip()
@@ -282,7 +283,7 @@ def realtime_check_bulk(req: RealtimeBulkRequest) -> dict[str, Any]:
             uid_tasks.append((index, job, job_id, raw_input))
             continue
 
-        results[index] = _run_realtime_post_job(job, job_id, raw_input)
+        post_tasks.append((index, job, job_id, raw_input))
 
     if uid_tasks:
         worker_count = _realtime_bulk_uid_worker_count(len(uid_tasks))
@@ -303,6 +304,26 @@ def realtime_check_bulk(req: RealtimeBulkRequest) -> dict[str, Any]:
                         job = jobs[index]
                         job_id = (job.id or f"job_{index + 1}").strip()
                         results[index] = _realtime_job_error(job_id, "uid", f"job_error:{type(exc).__name__}")
+
+    if post_tasks:
+        worker_count = _realtime_bulk_post_worker_count(len(post_tasks))
+        if worker_count <= 1:
+            for index, job, job_id, raw_input in post_tasks:
+                results[index] = _run_realtime_post_job(job, job_id, raw_input)
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                future_map = {
+                    executor.submit(_run_realtime_post_job, job, job_id, raw_input): index
+                    for index, job, job_id, raw_input in post_tasks
+                }
+                for future in as_completed(future_map):
+                    index = future_map[future]
+                    try:
+                        results[index] = future.result()
+                    except Exception as exc:
+                        job = jobs[index]
+                        job_id = (job.id or f"job_{index + 1}").strip()
+                        results[index] = _realtime_job_error(job_id, "post", f"job_error:{type(exc).__name__}")
 
     final_results = [
         item if item is not None else _realtime_job_error(f"job_{index + 1}", "uid", "job_not_processed")
@@ -367,4 +388,12 @@ def _realtime_bulk_uid_worker_count(job_count: int) -> int:
         configured = int(os.getenv("REALTIME_BULK_UID_MAX_WORKERS", "10"))
     except ValueError:
         configured = 10
+    return max(1, min(job_count, configured))
+
+
+def _realtime_bulk_post_worker_count(job_count: int) -> int:
+    try:
+        configured = int(os.getenv("REALTIME_BULK_POST_MAX_WORKERS", "3"))
+    except ValueError:
+        configured = 3
     return max(1, min(job_count, configured))

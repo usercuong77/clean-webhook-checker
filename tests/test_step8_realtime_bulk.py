@@ -1,7 +1,11 @@
 import unittest
 from unittest.mock import patch
 
-from app_modules.api.controller import RealtimeBulkRequest, realtime_check_bulk
+from app_modules.api.controller import (
+    RealtimeBulkRequest,
+    _realtime_bulk_post_worker_count,
+    realtime_check_bulk,
+)
 
 
 class Step8RealtimeBulkTests(unittest.TestCase):
@@ -83,6 +87,15 @@ class Step8RealtimeBulkTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["reason"], "empty_input")
         self.assertFalse(payload["results"][1]["ok"])
         self.assertEqual(payload["results"][1]["reason"], "unsupported_job_type")
+
+    @patch.dict("os.environ", {"REALTIME_BULK_POST_MAX_WORKERS": "4"})
+    def test_post_worker_count_uses_env_cap(self):
+        self.assertEqual(_realtime_bulk_post_worker_count(10), 4)
+        self.assertEqual(_realtime_bulk_post_worker_count(2), 2)
+
+    @patch.dict("os.environ", {"REALTIME_BULK_POST_MAX_WORKERS": "bad"})
+    def test_post_worker_count_falls_back_to_safe_default(self):
+        self.assertEqual(_realtime_bulk_post_worker_count(10), 3)
 
 
 if __name__ == "__main__":
