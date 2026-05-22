@@ -377,7 +377,10 @@ def _resolve_profile_tick_with_cookie(
 ) -> ProfileTickResult:
     best_name_result: ProfileTickResult | None = None
     seen_unwrapped: set[str] = set()
-    for account in load_cookie_accounts()[:_tick_cookie_account_limit(forced)]:
+    accounts = load_cookie_accounts()[:_tick_cookie_account_limit(forced)]
+    for account_index, account in enumerate(accounts):
+        if not forced and account_index > 0 and best_name_result is None:
+            break
         if not account.is_usable:
             continue
         account_name_result: ProfileTickResult | None = None
@@ -404,10 +407,10 @@ def _resolve_profile_tick_with_cookie(
                 if result.name and account_name_result is None:
                     account_name_result = result
         if account_name_result:
-            if not forced:
-                return account_name_result
             if best_name_result is None:
                 best_name_result = account_name_result
+            if not forced:
+                continue
 
     if best_name_result:
         return best_name_result
@@ -1131,7 +1134,7 @@ def _tick_cookie_account_limit(forced: bool) -> int:
         return 0
     if forced:
         return configured
-    return 1
+    return min(configured, 2)
 
 
 def _unique(items: list[str]) -> list[str]:

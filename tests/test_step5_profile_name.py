@@ -245,7 +245,7 @@ class Step5ProfileNameTests(unittest.TestCase):
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
-    def test_checktick_default_cookie_fallback_stops_after_first_cookie_name(
+    def test_checktick_default_cookie_fallback_can_confirm_verified_on_second_cookie(
         self,
         fetch_limited,
         load_accounts,
@@ -263,6 +263,12 @@ class Step5ProfileNameTests(unittest.TestCase):
                 "https://www.facebook.com/no.public.name",
                 "ok",
             ),
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="Cookie Name Verified account">',
+                "https://www.facebook.com/no.public.name",
+                "ok",
+            ),
         ]
 
         result = check_tick_input(
@@ -271,8 +277,38 @@ class Step5ProfileNameTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "LIVE")
         self.assertEqual(result["name"], "Cookie Name")
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(fetch_limited.call_count, 3)
+        self.assertEqual(cookie_candidates.call_count, 2)
+
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_default_cookie_fallback_stops_when_first_cookie_has_no_name(
+        self,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        load_accounts.return_value = [_cookie_account("100000000000001"), _cookie_account("100000000000002")]
+        public_candidates.return_value = [("https://www.facebook.com/no.public.name", {}, "public")]
+        cookie_candidates.return_value = [("https://www.facebook.com/no.public.name", {}, "cookie")]
+        fetch_limited.side_effect = [
+            _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/no.public.name", "ok"),
+            _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/no.public.name", "ok"),
+        ]
+
+        result = check_tick_input(
+            CheckRequest(input="https://www.facebook.com/no.public.name", mode="1", includeName=True)
+        )
+
+        self.assertEqual(result["status"], "UNKNOWN")
         self.assertFalse(result["verified"])
         self.assertTrue(result["usedCookie"])
+        self.assertEqual(result["reason"], "no_cookie_and_cookie_name_not_found")
         self.assertEqual(fetch_limited.call_count, 2)
         self.assertEqual(cookie_candidates.call_count, 1)
 
