@@ -1055,7 +1055,7 @@ def _read_response_text_limited(response: requests.Response) -> str:
     started = perf_counter()
     fetch_deadline = _stream_fetch_deadline_seconds()
 
-    for chunk in response.iter_content(chunk_size=65536):
+    for chunk in response.iter_content(chunk_size=_stream_chunk_size_bytes()):
         if not chunk:
             continue
         if isinstance(chunk, str):
@@ -1262,6 +1262,14 @@ def _stream_check_interval_bytes() -> int:
     except ValueError:
         configured = 262_144
     return max(65_536, min(configured, 1_048_576))
+
+
+def _stream_chunk_size_bytes() -> int:
+    try:
+        configured = int(os.getenv("LATEST_POST_STREAM_CHUNK_BYTES", "8192"))
+    except ValueError:
+        configured = 8_192
+    return max(4_096, min(configured, 65_536))
 
 
 def _stream_stop_after_post_bytes() -> int:
