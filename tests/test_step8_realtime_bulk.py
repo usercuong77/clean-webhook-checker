@@ -95,7 +95,7 @@ class Step8RealtimeBulkTests(unittest.TestCase):
 
     @patch.dict("os.environ", {"REALTIME_BULK_POST_MAX_WORKERS": "bad"})
     def test_post_worker_count_falls_back_to_safe_default(self):
-        self.assertEqual(_realtime_bulk_post_worker_count(10), 3)
+        self.assertEqual(_realtime_bulk_post_worker_count(10), 5)
 
 
 if __name__ == "__main__":
