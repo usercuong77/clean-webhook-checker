@@ -1290,9 +1290,10 @@ def _stream_fetch_deadline_seconds() -> float:
 
 def _cookie_account_limit() -> int:
     try:
-        return max(0, int(os.getenv("LATEST_POST_COOKIE_ACCOUNT_LIMIT", "2")))
+        configured = int(os.getenv("LATEST_POST_COOKIE_ACCOUNT_LIMIT", "2"))
     except ValueError:
-        return 2
+        configured = 2
+    return max(0, min(configured, 2))
 
 
 def _is_auth_wall(body_low: str, final_url: str) -> bool:

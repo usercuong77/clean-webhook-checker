@@ -53,6 +53,10 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(_max_probe_attempts(), 6)
         self.assertEqual(_cookie_account_limit(), 2)
 
+    @patch.dict("os.environ", {"LATEST_POST_COOKIE_ACCOUNT_LIMIT": "4"})
+    def test_latest_post_cookie_limit_hard_caps_legacy_env(self):
+        self.assertEqual(_cookie_account_limit(), 2)
+
     def test_no_cookie_rejects_field_exception_without_timestamp(self):
         self.assertFalse(
             is_trusted_no_cookie_latest_post(
