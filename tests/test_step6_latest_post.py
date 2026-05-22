@@ -15,6 +15,7 @@ from app_modules.features.latest_post import (
     get_latest_post_direct_from_input,
     is_trusted_no_cookie_latest_post,
     parse_latest_post_from_html,
+    _fetch_text,
 )
 from app_modules.resolvers.uid_resolver import ResolvedInput
 
@@ -388,6 +389,35 @@ class Step6LatestPostTests(unittest.TestCase):
         sixth_call_headers = fetch_text.call_args_list[5].args[1]
         self.assertIn("c_user=100000000000077", sixth_call_headers["Cookie"])
 
+    @patch.dict(
+        "os.environ",
+        {
+            "LATEST_POST_STREAM_CHECK_INTERVAL_BYTES": "65536",
+            "LATEST_POST_STREAM_STOP_AFTER_POST_BYTES": "131072",
+            "LATEST_POST_MAX_RESPONSE_BYTES": "300000",
+        },
+    )
+    @patch("app_modules.features.latest_post.requests.get")
+    def test_fetch_text_streams_and_stops_after_post_payload(self, get):
+        post_id = "123456789012345"
+        get.return_value = _stream_response(
+            [
+                b"x" * 70000,
+                (
+                    f'"post_id":"{post_id}"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Streamed post content"}'
+                ).encode("utf-8") + b"y" * 70000,
+                b"tail-that-should-not-be-read",
+            ]
+        )
+
+        fetch = _fetch_text("https://www.facebook.com/test.user?sk=posts", {"User-Agent": "test"}, 7)
+
+        self.assertEqual(fetch.http_code, 200)
+        self.assertIn("Streamed post content", fetch.text)
+        self.assertNotIn("tail-that-should-not-be-read", fetch.text)
+
 
 def _resolved(uid="", username="", resolver_name=""):
     return ResolvedInput(
@@ -410,6 +440,28 @@ def _cookie_account(c_user="100000000000099"):
         index=0,
         cookies={"c_user": c_user, "xs": f"fake-xs-token-{c_user}"},
     )
+
+
+class _FakeStreamResponse:
+    status_code = 200
+    url = "https://www.facebook.com/test.user?sk=posts"
+    encoding = "utf-8"
+
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def iter_content(self, chunk_size=65536):
+        yield from self._chunks
+
+
+def _stream_response(chunks):
+    return _FakeStreamResponse(chunks)
 
 
 if __name__ == "__main__":

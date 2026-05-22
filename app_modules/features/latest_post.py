@@ -1027,15 +1027,70 @@ def latest_post_failure_priority(reason_raw: Any, http_code_raw: Any) -> int:
 
 def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchResult:
     try:
-        response = requests.get(url, headers=dict(headers), timeout=timeout, allow_redirects=True)
-        return FetchResult(
-            http_code=response.status_code,
-            text=response.text or "",
-            final_url=response.url or url,
-            reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
-        )
+        with requests.get(
+            url,
+            headers=dict(headers),
+            timeout=_request_timeout_tuple(timeout),
+            allow_redirects=True,
+            stream=True,
+        ) as response:
+            text = _read_response_text_limited(response)
+            return FetchResult(
+                http_code=response.status_code,
+                text=text,
+                final_url=response.url or url,
+                reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
+            )
     except requests.RequestException as exc:
         return FetchResult(0, "", url, f"request_error:{type(exc).__name__}")
+
+
+def _read_response_text_limited(response: requests.Response) -> str:
+    max_bytes = _max_response_bytes()
+    chunks: list[bytes] = []
+    total = 0
+    next_check_at = _stream_check_interval_bytes()
+    encoding = response.encoding or "utf-8"
+
+    for chunk in response.iter_content(chunk_size=65536):
+        if not chunk:
+            continue
+        if isinstance(chunk, str):
+            chunk = chunk.encode(encoding, errors="ignore")
+        remaining = max_bytes - total
+        if remaining <= 0:
+            break
+        if len(chunk) > remaining:
+            chunk = chunk[:remaining]
+        chunks.append(chunk)
+        total += len(chunk)
+
+        if total >= next_check_at:
+            text = b"".join(chunks).decode(encoding, errors="ignore")
+            if _has_enough_latest_post_payload_for_stream_stop(text, total):
+                return text
+            next_check_at += _stream_check_interval_bytes()
+
+        if total >= max_bytes:
+            break
+
+    return b"".join(chunks).decode(encoding, errors="ignore")
+
+
+def _has_enough_latest_post_payload_for_stream_stop(text: str, total_bytes: int) -> bool:
+    parsed = parse_latest_post_from_html(text)
+    if not parsed or not has_latest_post_evidence_in_html(text, parsed.get("postId")):
+        return False
+    content = extract_latest_post_content_from_html(text, parsed.get("postId"))
+    if content:
+        return True
+    return total_bytes >= _stream_stop_after_post_bytes()
+
+
+def _request_timeout_tuple(timeout: float) -> tuple[float, float]:
+    read_timeout = max(2.0, float(timeout or 0))
+    connect_timeout = min(4.0, max(1.0, read_timeout / 2))
+    return (connect_timeout, read_timeout)
 
 
 def _headers_for_candidate(candidate: CookieCandidate) -> list[tuple[str, dict[str, str]]]:
@@ -1185,6 +1240,30 @@ def _max_probe_attempts() -> int:
         return max(4, int(os.getenv("LATEST_POST_MAX_PROBE_ATTEMPTS", "18")))
     except ValueError:
         return 18
+
+
+def _max_response_bytes() -> int:
+    try:
+        configured = int(os.getenv("LATEST_POST_MAX_RESPONSE_BYTES", "3200000"))
+    except ValueError:
+        configured = 3_200_000
+    return max(800_000, min(configured, 8_000_000))
+
+
+def _stream_check_interval_bytes() -> int:
+    try:
+        configured = int(os.getenv("LATEST_POST_STREAM_CHECK_INTERVAL_BYTES", "262144"))
+    except ValueError:
+        configured = 262_144
+    return max(65_536, min(configured, 1_048_576))
+
+
+def _stream_stop_after_post_bytes() -> int:
+    try:
+        configured = int(os.getenv("LATEST_POST_STREAM_STOP_AFTER_POST_BYTES", "1800000"))
+    except ValueError:
+        configured = 1_800_000
+    return max(800_000, min(configured, _max_response_bytes()))
 
 
 def _cookie_account_limit() -> int:
