@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlparse, urlunparse
+
+import requests
 
 
 COOKIE_FILE_ENV_KEYS = (
@@ -19,7 +23,21 @@ COOKIE_JSON_ENV_KEYS = (
     "FB_COOKIES_POOL_JSON",
 )
 
+REMOTE_COOKIE_POOL_URL_KEYS = (
+    "UID_CHECKER_REMOTE_COOKIE_POOL_URL",
+    "CLOUDFLARE_COOKIE_POOL_URL",
+    "COOKIE_POOL_URL",
+)
+
+REMOTE_COOKIE_POOL_SECRET_KEYS = (
+    "UID_CHECKER_REMOTE_COOKIE_POOL_SECRET",
+    "COOKIE_POOL_SECRET",
+    "RENDER_REGISTRATION_SECRET",
+)
+
 DEFAULT_LOCAL_COOKIE_FILE = Path(__file__).resolve().parents[2] / "local_secrets" / "facebook_cookies.txt"
+
+_REMOTE_CACHE: dict[str, Any] = {"expires_at": 0.0, "accounts": []}
 
 
 @dataclass(frozen=True)
@@ -46,10 +64,19 @@ def load_cookie_accounts(
     env: Mapping[str, str] | None = None,
 ) -> list[CookieAccount]:
     environ = os.environ if env is None else env
-    explicit_path = _first_env_value(environ, COOKIE_FILE_ENV_KEYS)
 
-    if path or explicit_path:
-        candidate_path = Path(path or explicit_path)
+    if path:
+        candidate_path = Path(path)
+        if candidate_path.is_file():
+            return _accounts_from_payload(_read_json_file(candidate_path), str(candidate_path))
+
+    remote_accounts = _load_remote_cookie_accounts(environ)
+    if remote_accounts:
+        return remote_accounts
+
+    explicit_path = _first_env_value(environ, COOKIE_FILE_ENV_KEYS)
+    if explicit_path:
+        candidate_path = Path(explicit_path)
         if candidate_path.is_file():
             return _accounts_from_payload(_read_json_file(candidate_path), str(candidate_path))
 
@@ -70,6 +97,11 @@ def load_cookie_accounts(
         return _accounts_from_payload(_read_json_file(candidate_path), str(candidate_path))
 
     return []
+
+
+def reload_cookie_accounts_cache() -> None:
+    _REMOTE_CACHE["expires_at"] = 0.0
+    _REMOTE_CACHE["accounts"] = []
 
 
 def cookie_header(account: CookieAccount) -> str:
@@ -160,3 +192,78 @@ def _first_env_value(environ: Mapping[str, str], keys: tuple[str, ...]) -> str:
         if value:
             return value
     return ""
+
+
+def _load_remote_cookie_accounts(environ: Mapping[str, str]) -> list[CookieAccount]:
+    if _is_truthy(environ.get("UID_CHECKER_REMOTE_COOKIE_DISABLED")):
+        return []
+
+    url = _remote_cookie_pool_url(environ)
+    secret = _first_env_value(environ, REMOTE_COOKIE_POOL_SECRET_KEYS)
+    if not url or not secret:
+        return []
+
+    now = time.time()
+    cached_accounts = list(_REMOTE_CACHE.get("accounts") or [])
+    if cached_accounts and float(_REMOTE_CACHE.get("expires_at") or 0) > now:
+        return cached_accounts
+
+    try:
+        response = requests.get(
+            url,
+            headers={
+                "Accept": "application/json",
+                "X-Render-Registration-Secret": secret,
+                "X-Cookie-Pool-Secret": secret,
+            },
+            timeout=(2, _remote_timeout(environ)),
+        )
+        if response.status_code != 200:
+            return cached_accounts
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return cached_accounts
+
+    accounts = _accounts_from_payload(payload.get("accounts"), "remote_cookie_pool")
+    if accounts:
+        _REMOTE_CACHE["accounts"] = accounts
+        _REMOTE_CACHE["expires_at"] = now + _remote_ttl(environ)
+        return list(accounts)
+
+    return cached_accounts
+
+
+def _remote_cookie_pool_url(environ: Mapping[str, str]) -> str:
+    explicit = _first_env_value(environ, REMOTE_COOKIE_POOL_URL_KEYS)
+    if explicit:
+        return explicit
+
+    register_url = str(environ.get("CLOUDFLARE_RENDER_REGISTER_URL", "") or "").strip()
+    if not register_url:
+        return ""
+
+    try:
+        parsed = urlparse(register_url)
+        return urlunparse((parsed.scheme, parsed.netloc, "/admin/cookies/pool", "", "", ""))
+    except ValueError:
+        return ""
+
+
+def _remote_ttl(environ: Mapping[str, str]) -> int:
+    try:
+        value = int(str(environ.get("UID_CHECKER_REMOTE_COOKIE_TTL_SEC", "") or "").strip())
+        return max(10, min(value, 1800))
+    except ValueError:
+        return 120
+
+
+def _remote_timeout(environ: Mapping[str, str]) -> float:
+    try:
+        value = float(str(environ.get("UID_CHECKER_REMOTE_COOKIE_TIMEOUT_SEC", "") or "").strip())
+        return max(1.0, min(value, 10.0))
+    except ValueError:
+        return 5.0
+
+
+def _is_truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}

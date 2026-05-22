@@ -11,6 +11,7 @@ from app_modules.features.cookie_status import get_cookie_status
 from app_modules.features.latest_post import get_latest_post, get_latest_post_direct_from_input, sanitize_latest_post_input
 from app_modules.features.profile_name import choose_profile_name, resolve_profile_tick_from_input
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
+from app_modules.resolvers.facebook_cookies import reload_cookie_accounts_cache
 from app_modules.resolvers.uid_resolver import resolve_input
 
 
@@ -84,6 +85,14 @@ def health_payload() -> dict[str, Any]:
 
 def cookie_status_input() -> dict[str, Any]:
     return get_cookie_status()
+
+
+def cookie_reload_input() -> dict[str, Any]:
+    reload_cookie_accounts_cache()
+    return {
+        "ok": True,
+        "reason": "cookie_cache_reloaded",
+    }
 
 
 def check_input(req: CheckRequest) -> dict[str, Any]:
