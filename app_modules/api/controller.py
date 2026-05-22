@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app_modules.checkers.live_die import check_live_die
 from app_modules.core.config import get_config
+from app_modules.features.cookie_status import get_cookie_status
 from app_modules.features.latest_post import get_latest_post, get_latest_post_direct_from_input, sanitize_latest_post_input
 from app_modules.features.profile_name import choose_profile_name, resolve_profile_tick_from_input
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
@@ -79,6 +80,10 @@ def health_payload() -> dict[str, Any]:
         "service": config.app_name,
         "version": config.version,
     }
+
+
+def cookie_status_input() -> dict[str, Any]:
+    return get_cookie_status()
 
 
 def check_input(req: CheckRequest) -> dict[str, Any]:

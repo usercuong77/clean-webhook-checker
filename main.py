@@ -10,6 +10,7 @@ from app_modules.api.controller import (
     check_name_input,
     checkpost_direct_input,
     check_tick_input,
+    cookie_status_input,
     health_payload,
     latest_post_input,
     realtime_check_bulk,
@@ -52,6 +53,7 @@ def root() -> dict:
                 "/checktick",
                 "/latest-post",
                 "/checkpost",
+                "/cookies/status",
                 "/realtime/check-bulk",
                 "/viplike/packages",
                 "/viplike/order",
@@ -80,6 +82,13 @@ def check_name(req: CheckRequest, x_api_key: str | None = Header(default=None)) 
 def check_tick(req: CheckRequest, x_api_key: str | None = Header(default=None)) -> dict:
     require_api_key(x_api_key)
     return check_tick_input(req)
+
+
+@app.get("/cookies/status")
+@app.get("/cookies/status/")
+def cookies_status(x_api_key: str | None = Header(default=None)) -> dict:
+    require_api_key(x_api_key)
+    return cookie_status_input()
 
 
 @app.post("/latest-post")
