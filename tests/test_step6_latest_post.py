@@ -317,6 +317,52 @@ class Step6LatestPostTests(unittest.TestCase):
 
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_profile_php_retries_username_after_cookie_redirect(self, fetch_text, load_cookie_accounts):
+        load_cookie_accounts.return_value = [_cookie_account()]
+        fetch_text.side_effect = [
+            FetchResult(
+                200,
+                "Log in or sign up to view",
+                "https://www.facebook.com/profile.php?id=100037073983819&sk=posts",
+                "ok",
+            ),
+            FetchResult(
+                200,
+                "checkpoint",
+                "https://www.facebook.com/thanh.duyen.37570/",
+                "ok",
+            ),
+            FetchResult(
+                200,
+                "checkpoint",
+                "https://www.facebook.com/thanh.duyen.37570/",
+                "ok",
+            ),
+            FetchResult(
+                200,
+                (
+                    '"post_id":"123456789012345"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Profile id redirected latest post"}'
+                ),
+                "https://www.facebook.com/thanh.duyen.37570?sk=posts",
+                "ok",
+            ),
+        ]
+
+        payload = get_latest_post_direct_from_input("https://www.facebook.com/profile.php?id=100037073983819")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["uid"], "100037073983819")
+        self.assertEqual(payload["username"], "thanh.duyen.37570")
+        self.assertEqual(payload["method"], "direct_with_cookie")
+        self.assertEqual(payload["content"], "Profile id redirected latest post")
+        self.assertEqual(fetch_text.call_count, 4)
+        called_urls = [call.args[0] for call in fetch_text.call_args_list]
+        self.assertIn("https://www.facebook.com/thanh.duyen.37570?sk=posts", called_urls)
+
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
     def test_checkpost_direct_retries_no_cookie_without_requires_cookie_cache(self, fetch_text, load_cookie_accounts):
         load_cookie_accounts.return_value = [_cookie_account()]
         fetch_text.side_effect = [

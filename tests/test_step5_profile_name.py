@@ -312,6 +312,44 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(fetch_limited.call_count, 2)
         self.assertEqual(cookie_candidates.call_count, 1)
 
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_profile_php_retries_redirected_username_about(self, fetch_limited, load_accounts):
+        load_accounts.return_value = [_cookie_account()]
+        fetch_limited.side_effect = [
+            _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/profile.php?id=100037073983819", "ok"),
+            _fetch_result(
+                200,
+                "<title>Facebook</title>",
+                "https://www.facebook.com/profile.php?id=100037073983819&sk=about",
+                "ok",
+            ),
+            _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/thanh.duyen.37570/", "ok"),
+            _fetch_result(
+                200,
+                "<title>Facebook</title>",
+                "https://www.facebook.com/thanh.duyen.37570/about/?id=100037073983819&sk=about",
+                "ok",
+            ),
+            _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/thanh.duyen.37570", "ok"),
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="Thanh Duyen">',
+                "https://www.facebook.com/thanh.duyen.37570/about",
+                "ok",
+            ),
+        ]
+
+        result = check_tick_input(
+            CheckRequest(input="https://www.facebook.com/profile.php?id=100037073983819", mode="1", includeName=True)
+        )
+
+        self.assertEqual(result["status"], "LIVE")
+        self.assertEqual(result["name"], "Thanh Duyen")
+        self.assertEqual(result["username"], "thanh.duyen.37570")
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(fetch_limited.call_count, 6)
+
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")

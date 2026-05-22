@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app_modules.api.controller import CheckRequest, check_input
@@ -104,6 +105,37 @@ class Step45TdsUidResolverTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "uid_resolved_treated_as_live:uid_found_tds_api")
         self.assertEqual(payload["httpCode"], 200)
         self.assertEqual(dispatch_mode.call_count, 0)
+
+    @patch("app_modules.api.controller.resolve_uid_with_tds_api")
+    @patch("app_modules.checkers.live_die.dispatch_mode")
+    def test_check_profile_php_enriches_direct_uid_name_from_tds(self, dispatch_mode, tds_api):
+        dispatch_mode.return_value = (
+            "1",
+            Mock(
+                status="LIVE",
+                confidence="strong",
+                source="mode1_graph_public",
+                reason="graph_profile_picture_dimensions",
+                http_code=200,
+                to_probe=lambda: {},
+            ),
+        )
+        tds_api.return_value = SimpleNamespace(
+            uid="100037073983819",
+            name="Thanh Duyen",
+            source="tds_uid_api",
+            reason="uid_found_tds_api",
+            http_code=200,
+        )
+
+        payload = check_input(
+            CheckRequest(input="https://www.facebook.com/profile.php?id=100037073983819", mode="1", includeName=True)
+        )
+
+        self.assertEqual(payload["status"], "LIVE")
+        self.assertEqual(payload["uid"], "100037073983819")
+        self.assertEqual(payload["name"], "Thanh Duyen")
+        self.assertEqual(tds_api.call_count, 1)
 
     @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")

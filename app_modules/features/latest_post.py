@@ -234,6 +234,11 @@ def get_latest_post_direct_from_input(
         for url in probe_urls:
             for header_label, headers in _headers_for_candidate(candidate):
                 fetch = _fetch_text(url, headers, timeout)
+                discovered_username = extract_profile_username_from_url(fetch.final_url)
+                if discovered_username:
+                    if not direct_username:
+                        direct_username = discovered_username
+                    _append_direct_username_probe_urls(probe_urls, discovered_username)
                 parsed = parse_latest_post_from_html(fetch.text)
                 has_post = bool(parsed and is_latest_post_id_token(parsed.get("postId")))
                 has_evidence = bool(has_post and has_latest_post_evidence_in_html(fetch.text, parsed.get("postId")))
@@ -303,6 +308,19 @@ def get_latest_post_direct_from_input(
     failure["source"] = "direct_link_scrape"
     failure["directInput"] = cleaned_input
     return failure
+
+
+def _append_direct_username_probe_urls(probe_urls: list[str], username: str) -> None:
+    clean_username = str(username or "").strip().strip("/")
+    if not clean_username:
+        return
+    additions = build_direct_latest_post_probe_urls(f"https://www.facebook.com/{clean_username}")
+    seen = {str(url or "").strip().lower() for url in probe_urls}
+    for url in additions:
+        key = str(url or "").strip().lower()
+        if key and key not in seen:
+            probe_urls.append(url)
+            seen.add(key)
 
 
 def sanitize_latest_post_input(input_raw: Any) -> str:

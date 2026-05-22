@@ -12,6 +12,8 @@ from app_modules.features.latest_post import get_latest_post, get_latest_post_di
 from app_modules.features.profile_name import choose_profile_name, resolve_profile_tick_from_input
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
 from app_modules.resolvers.facebook_cookies import reload_cookie_accounts_cache
+from app_modules.resolvers.tds_uid_resolver import resolve_uid_with_tds_api
+from app_modules.resolvers.uid_resolver import ResolvedInput
 from app_modules.resolvers.uid_resolver import resolve_input
 
 
@@ -105,6 +107,7 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
         live_die,
         include_name=bool(req.includeName) and _profile_name_lookup_enabled(),
     ) or str(getattr(resolved, "resolver_name", "") or "").strip()
+    name = _enrich_direct_profile_url_name(raw_input, resolved, live_die.status, name, bool(req.includeName))
     elapsed_ms = int((perf_counter() - started) * 1000)
 
     return {
@@ -135,6 +138,7 @@ def check_tick_input(req: CheckRequest) -> dict[str, Any]:
     name = tick.name
     verified_label = tick.verified_label or _verified_account_label(name)
     status: Status = _profile_tick_status(name, verified_label, tick.reason, tick.http_code)
+    status = _profile_tick_status_with_uid(raw_input, tick, status)
     elapsed_ms = int((perf_counter() - started) * 1000)
     return {
         "ok": True,
@@ -171,12 +175,84 @@ def _profile_tick_status(name: str, verified_label: str, reason: str, http_code:
         "page_not_found",
         "profile_unavailable",
         "http_404",
-        "no_cookie_and_cookie_name_not_found",
-        "cookie_name_and_verified_not_found",
     )
     if int(http_code or 0) in {200, 404} and any(marker in normalized_reason for marker in terminal_reasons):
         return "DIE"
     return "UNKNOWN"
+
+
+def _profile_tick_status_with_uid(raw_input: str, tick: Any, current_status: Status) -> Status:
+    if current_status != "UNKNOWN":
+        return current_status
+
+    uid = str(tick.uid or "").strip()
+    if not uid:
+        if _profile_tick_name_miss_is_die(str(getattr(tick, "reason", "") or ""), int(getattr(tick, "http_code", 0) or 0)):
+            return "DIE"
+        return current_status
+
+    resolved = ResolvedInput(
+        input=str(raw_input or "").strip(),
+        uid=uid,
+        username=str(getattr(tick, "username", "") or "").strip(),
+        canonical_url=str(getattr(tick, "canonical_url", "") or f"https://www.facebook.com/profile.php?id={uid}").strip(),
+        source="profile_php",
+        reason=str(getattr(tick, "reason", "") or "profile_tick_uid_check"),
+    )
+    live_die = check_live_die(resolved, mode="1")
+    if live_die.status in {"LIVE", "DIE"}:
+        return live_die.status  # type: ignore[return-value]
+    return current_status
+
+
+def _profile_tick_name_miss_is_die(reason: str, http_code: int) -> bool:
+    normalized_reason = str(reason or "").lower()
+    return int(http_code or 0) in {200, 404} and any(
+        marker in normalized_reason
+        for marker in (
+            "no_cookie_and_cookie_name_not_found",
+            "cookie_name_and_verified_not_found",
+        )
+    )
+
+
+def _enrich_direct_profile_url_name(
+    raw_input: str,
+    resolved: ResolvedInput,
+    status: str,
+    current_name: str,
+    include_name: bool,
+) -> str:
+    if current_name or not include_name or status != "LIVE" or not resolved.uid:
+        return current_name
+    raw = str(raw_input or "").strip().lower()
+    if "facebook.com/" not in raw or "profile.php" not in raw:
+        return current_name
+    try:
+        tds = resolve_uid_with_tds_api(
+            resolved.canonical_url or raw_input,
+            timeout=_direct_profile_name_tds_timeout(),
+            deadline=_direct_profile_name_tds_deadline(),
+        )
+    except Exception:
+        return current_name
+    if tds.uid and str(tds.uid).strip() == str(resolved.uid).strip() and str(tds.name or "").strip():
+        return str(tds.name or "").strip()
+    return current_name
+
+
+def _direct_profile_name_tds_timeout() -> float:
+    try:
+        return max(1.0, min(float(os.getenv("CHECK_DIRECT_PROFILE_NAME_TDS_TIMEOUT_SEC", "5")), 8.0))
+    except ValueError:
+        return 5.0
+
+
+def _direct_profile_name_tds_deadline() -> float:
+    try:
+        return max(1.0, min(float(os.getenv("CHECK_DIRECT_PROFILE_NAME_TDS_DEADLINE_SEC", "8")), 12.0))
+    except ValueError:
+        return 8.0
 
 
 def _profile_name_lookup_enabled() -> bool:

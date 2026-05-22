@@ -296,6 +296,21 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
     )
     if cookie.name or cookie.verified_label or force_cookie:
         return cookie
+    redirected_target = _first_profile_redirect_target_from_probes(probes, normalized)
+    if redirected_target:
+        retry_uid = extract_uid_from_url(redirected_target) or uid
+        retry_username = extract_username_from_url(redirected_target) or username
+        retry = _resolve_profile_tick_with_cookie(
+            normalized=redirected_target,
+            uid=retry_uid,
+            username=retry_username,
+            canonical_url=_canonical_profile_tick_url(redirected_target, retry_uid),
+            timeout=timeout,
+            probes=probes,
+            forced=force_cookie,
+        )
+        if retry.name or retry.verified_label or retry.used_cookie:
+            return retry
     if cookie.used_cookie:
         return cookie
 
@@ -606,6 +621,36 @@ def _first_login_next_target_from_probes(probes: list[dict[str, Any]]) -> str:
             if target:
                 return target
     return ""
+
+
+def _first_profile_redirect_target_from_probes(probes: list[dict[str, Any]], current_url: str) -> str:
+    current_key = str(current_url or "").strip().rstrip("/").lower()
+    for probe in probes:
+        for key in ("finalUrl", "url"):
+            target = _profile_redirect_target(str(probe.get(key) or ""))
+            if target and target.rstrip("/").lower() != current_key:
+                return target
+    return ""
+
+
+def _profile_redirect_target(url: str) -> str:
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    host = parsed.netloc.lower()
+    if not host.endswith("facebook.com"):
+        return ""
+    path = (parsed.path or "/").rstrip("/") or "/"
+    lower_path = path.lower()
+    if lower_path in {"/", "/login"} or lower_path.startswith("/login") or lower_path.startswith("/share"):
+        return ""
+    if "profile.php" in lower_path:
+        return ""
+    username = extract_username_from_url(value)
+    if not username:
+        return ""
+    return urlunparse(("https", "www.facebook.com", f"/{username}", "", "", ""))
 
 
 def _login_next_profile_target(url: str) -> str:
