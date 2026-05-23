@@ -118,6 +118,7 @@ COMMENT_CONTEXT_MARKERS = (
 )
 TICK_PUBLIC_READ_CAP_BYTES = 750_000
 TICK_COOKIE_READ_CAP_BYTES = 950_000
+TICK_COOKIE_PROFILE_UID_READ_CAP_BYTES = 3_400_000
 PROFILE_TICK_VERIFIED_MARKERS = (
     "verified account",
     "tài khoản đã xác minh",
@@ -404,7 +405,7 @@ def _resolve_profile_tick_with_cookie(
                 url=url,
                 headers=headers,
                 timeout=timeout,
-                max_bytes=TICK_COOKIE_READ_CAP_BYTES,
+                max_bytes=_cookie_tick_read_cap_bytes(normalized, uid, username),
                 raw_uid=uid,
                 raw_username=username,
                 fallback_canonical_url=canonical_url,
@@ -463,6 +464,14 @@ def _cookie_tick_probe_candidates(normalized: str, uid: str, username: str, acco
     urls = _fast_profile_tick_urls(normalized, uid, username)
     headers = _cookie_desktop_headers(account)
     return [(url, dict(headers), "desktop_logged_in") for url in urls]
+
+
+def _cookie_tick_read_cap_bytes(normalized: str, uid: str, username: str) -> int:
+    if uid and not username:
+        return TICK_COOKIE_PROFILE_UID_READ_CAP_BYTES
+    if "profile.php" in str(normalized or "").lower():
+        return TICK_COOKIE_PROFILE_UID_READ_CAP_BYTES
+    return TICK_COOKIE_READ_CAP_BYTES
 
 
 def _fast_profile_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
@@ -646,6 +655,9 @@ def _profile_redirect_target(url: str) -> str:
     if lower_path in {"/", "/login"} or lower_path.startswith("/login") or lower_path.startswith("/share"):
         return ""
     if "profile.php" in lower_path:
+        uid = extract_uid_from_url(value)
+        if uid:
+            return f"https://www.facebook.com/profile.php?id={uid}"
         return ""
     username = extract_username_from_url(value)
     if not username:

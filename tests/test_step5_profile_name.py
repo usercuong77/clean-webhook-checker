@@ -351,6 +351,51 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(fetch_limited.call_count, 6)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_share_retries_clean_profile_uid_redirect_for_verified(
+        self,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        profile_url = "https://www.facebook.com/profile.php?id=100003717317472"
+        share_redirect = (
+            "https://www.facebook.com/profile.php?id=100003717317472"
+            "&rdid=abc&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F18NhB6zRpS%2F"
+        )
+        load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [("https://www.facebook.com/share/18NhB6zRpS/", {}, "public")]
+
+        def cookie_candidate_urls(normalized, uid, username, account):
+            return [(normalized, {}, "cookie")]
+
+        cookie_candidates.side_effect = cookie_candidate_urls
+        fetch_limited.side_effect = [
+            _fetch_result(200, "<title>Facebook</title>", share_redirect, "ok"),
+            _fetch_result(200, "<title>Facebook</title>", share_redirect, "ok"),
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="Độ Phùng Tài khoản đã xác minh">',
+                profile_url,
+                "ok",
+            ),
+        ]
+
+        result = check_tick_input(
+            CheckRequest(input="https://www.facebook.com/share/18NhB6zRpS/", mode="1", includeName=True)
+        )
+
+        self.assertEqual(result["status"], "LIVE")
+        self.assertEqual(result["uid"], "100003717317472")
+        self.assertEqual(result["name"], "Độ Phùng")
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(cookie_candidates.call_args_list[-1].args[0], profile_url)
+
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
     def test_checktick_force_cookie_can_confirm_verified_on_second_cookie(
