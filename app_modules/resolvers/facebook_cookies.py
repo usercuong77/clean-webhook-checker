@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import time
+import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 import requests
 
@@ -43,6 +44,7 @@ DEFAULT_REMOTE_COOKIE_POOL_URL = (
     "https://clean-telegram-cloudflare-gateway.0987654321ct0987654321.workers.dev/admin/cookies/pool"
 )
 
+COOKIE_METADATA_KEYS = {"__user_agent", "_user_agent", "useragent"}
 _REMOTE_CACHE: dict[str, Any] = {"expires_at": 0.0, "accounts": []}
 
 
@@ -63,6 +65,10 @@ class CookieAccount:
         if len(value) <= 6:
             return "***"
         return f"{value[:4]}***{value[-4:]}"
+
+    @property
+    def browser_user_agent(self) -> str:
+        return _extract_browser_user_agent(self.cookies)
 
 
 def load_cookie_accounts(
@@ -115,6 +121,8 @@ def cookie_header(account: CookieAccount) -> str:
     for key, value in account.cookies.items():
         clean_key = str(key or "").strip()
         clean_value = str(value or "").strip()
+        if _is_cookie_metadata_key(clean_key):
+            continue
         if clean_key and clean_value:
             parts.append(f"{clean_key}={clean_value}")
     return "; ".join(parts)
@@ -139,16 +147,36 @@ def _accounts_from_payload(payload: Any, source: str) -> list[CookieAccount]:
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
-        cookies = {
-            str(key).strip(): str(value).strip()
-            for key, value in item.items()
-            if str(key or "").strip() and str(value or "").strip()
-        }
+        cookies = _normalize_cookie_map(item)
         c_user = cookies.get("c_user", "")
         if not c_user:
             continue
         accounts.append(CookieAccount(c_user=c_user, source=source, index=index, cookies=cookies))
     return accounts
+
+
+def _normalize_cookie_map(item: Mapping[str, Any]) -> dict[str, str]:
+    cookies: dict[str, str] = {}
+    browser_user_agent = ""
+    for key, value in item.items():
+        clean_key = str(key or "").strip()
+        clean_value = str(value or "").strip()
+        if not clean_key or not clean_value:
+            continue
+        lower_key = clean_key.lower()
+        if lower_key == "useragent":
+            browser_user_agent = _decode_user_agent_value(clean_value) or browser_user_agent
+            continue
+        if lower_key in {"__user_agent", "_user_agent"}:
+            browser_user_agent = clean_value or browser_user_agent
+            continue
+        if lower_key == "_uafec" and not browser_user_agent:
+            browser_user_agent = unquote(clean_value)
+        cookies[clean_key] = clean_value
+
+    if _looks_like_browser_user_agent(browser_user_agent):
+        cookies["__user_agent"] = browser_user_agent
+    return cookies
 
 
 def _normalize_cookie_payload(payload: Any) -> list[Any]:
@@ -273,3 +301,47 @@ def _remote_timeout(environ: Mapping[str, str]) -> float:
 
 def _is_truthy(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_cookie_metadata_key(key: str) -> bool:
+    return str(key or "").strip().lower() in COOKIE_METADATA_KEYS
+
+
+def _extract_browser_user_agent(cookies: Mapping[str, str]) -> str:
+    for key in ("__user_agent", "_user_agent"):
+        value = str(cookies.get(key, "") or "").strip()
+        if _looks_like_browser_user_agent(value):
+            return value
+
+    raw_user_agent = str(cookies.get("useragent", "") or "").strip()
+    decoded = _decode_user_agent_value(raw_user_agent)
+    if decoded:
+        return decoded
+
+    uafec = str(cookies.get("_uafec", "") or "").strip()
+    decoded_uafec = unquote(uafec)
+    return decoded_uafec if _looks_like_browser_user_agent(decoded_uafec) else ""
+
+
+def _decode_user_agent_value(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    decoded_uri = unquote(raw)
+    if _looks_like_browser_user_agent(decoded_uri):
+        return decoded_uri
+    try:
+        normalized = raw.replace("-", "+").replace("_", "/")
+        decoded = base64.b64decode(normalized + "=" * (-len(normalized) % 4)).decode("utf-8", errors="ignore")
+        if _looks_like_browser_user_agent(decoded):
+            return decoded
+    except (ValueError, OSError):
+        return ""
+    return raw if _looks_like_browser_user_agent(raw) else ""
+
+
+def _looks_like_browser_user_agent(value: str) -> bool:
+    normalized = str(value or "").strip()
+    if not normalized.lower().startswith("mozilla/5.0"):
+        return False
+    return any(marker in normalized.lower() for marker in ("chrome", "safari", "firefox", "edg", "mobile"))

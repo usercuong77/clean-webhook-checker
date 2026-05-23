@@ -47,13 +47,20 @@ def probe_cookie_account(index: int, account: CookieAccount) -> dict[str, Any]:
         response = requests.get(
             COOKIE_STATUS_PROBE_URL,
             headers={
-                "User-Agent": (
+                "User-Agent": account.browser_user_agent or (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/134.0.0.0 Safari/537.36"
                 ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+                "Cache-Control": "max-age=0",
                 "Cookie": cookie_header(account),
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
             },
             timeout=(4, 10),
             allow_redirects=True,
@@ -82,7 +89,7 @@ def probe_cookie_account(index: int, account: CookieAccount) -> dict[str, Any]:
 
 
 def classify_cookie_response(account: CookieAccount, final_url: str, body: str) -> tuple[str, str]:
-    haystack = f"{final_url}\n{body[:12000]}".lower()
+    haystack = f"{final_url}\n{body[:80000]}".lower()
     if "checkpoint" in haystack or "confirm your identity" in haystack:
         return "CHECKPOINT", "checkpoint_detected"
 

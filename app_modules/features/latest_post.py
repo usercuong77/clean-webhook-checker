@@ -4,6 +4,7 @@ import html as html_lib
 import json
 import os
 import re
+import base64
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Mapping
@@ -96,6 +97,7 @@ class CookieCandidate:
     source: str
     cookies: dict[str, str]
     masked_id: str = ""
+    user_agent: str = ""
 
     @property
     def has_cookie(self) -> bool:
@@ -800,21 +802,25 @@ def build_cookie_candidates(
     request_cookie = _normalize_cookie_dict(request_cookies)
     if request_cookie:
         seen.add(_cookie_fingerprint(request_cookie))
-        candidates.append(CookieCandidate("request_cookie", request_cookie, _masked_cookie_dict(request_cookie)))
+        candidates.append(
+            CookieCandidate("request_cookie", request_cookie, _masked_cookie_dict(request_cookie), _cookie_user_agent(request_cookie))
+        )
 
     for index, item in enumerate(request_cookie_pool or [], start=1):
         cookies = _normalize_cookie_dict(item)
         fingerprint = _cookie_fingerprint(cookies)
         if cookies and fingerprint not in seen:
             seen.add(fingerprint)
-            candidates.append(CookieCandidate(f"request_pool_{index}", cookies, _masked_cookie_dict(cookies)))
+            candidates.append(
+                CookieCandidate(f"request_pool_{index}", cookies, _masked_cookie_dict(cookies), _cookie_user_agent(cookies))
+            )
 
     for account in _local_cookie_accounts():
         fingerprint = _cookie_fingerprint(account.cookies)
         if fingerprint in seen:
             continue
         seen.add(fingerprint)
-        candidates.append(CookieCandidate(account.source, dict(account.cookies), account.masked_id))
+        candidates.append(CookieCandidate(account.source, dict(account.cookies), account.masked_id, account.browser_user_agent))
 
     candidates.append(CookieCandidate("no_cookie", {}))
     return candidates
@@ -1120,7 +1126,7 @@ def _request_timeout_tuple(timeout: float) -> tuple[float, float]:
 def _headers_for_candidate(candidate: CookieCandidate) -> list[tuple[str, dict[str, str]]]:
     if not candidate.has_cookie:
         return [("no_cookie_desktop", _base_headers(_desktop_user_agent()))]
-    return [("cookie_desktop", _cookie_headers(candidate.cookies, _desktop_user_agent()))]
+    return [("cookie_desktop", _cookie_headers(candidate.cookies, candidate.user_agent or _desktop_user_agent()))]
 
 
 def _base_headers(user_agent: str) -> dict[str, str]:
@@ -1141,7 +1147,11 @@ def _base_headers(user_agent: str) -> dict[str, str]:
 
 def _cookie_headers(cookies: Mapping[str, str], user_agent: str) -> dict[str, str]:
     headers = _base_headers(user_agent)
-    headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in cookies.items() if key and value)
+    headers["Cookie"] = "; ".join(
+        f"{key}={value}"
+        for key, value in cookies.items()
+        if key and value and not _is_cookie_metadata_key(key)
+    )
     return headers
 
 
@@ -1236,6 +1246,47 @@ def _normalize_cookie_dict(raw: Mapping[str, Any] | None) -> dict[str, str]:
         for key, value in raw.items()
         if str(key or "").strip() and str(value or "").strip()
     }
+
+
+def _cookie_user_agent(cookies: Mapping[str, str]) -> str:
+    for key in ("__user_agent", "_user_agent"):
+        value = str(cookies.get(key, "") or "").strip()
+        if _looks_like_browser_user_agent(value):
+            return value
+    raw_user_agent = str(cookies.get("useragent", "") or "").strip()
+    decoded = _decode_user_agent_value(raw_user_agent)
+    if decoded:
+        return decoded
+    decoded_uafec = unquote(str(cookies.get("_uafec", "") or "").strip())
+    return decoded_uafec if _looks_like_browser_user_agent(decoded_uafec) else ""
+
+
+def _decode_user_agent_value(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    decoded_uri = unquote(raw)
+    if _looks_like_browser_user_agent(decoded_uri):
+        return decoded_uri
+    try:
+        normalized = raw.replace("-", "+").replace("_", "/")
+        decoded = base64.b64decode(normalized + "=" * (-len(normalized) % 4)).decode("utf-8", errors="ignore")
+        if _looks_like_browser_user_agent(decoded):
+            return decoded
+    except (ValueError, OSError):
+        return ""
+    return raw if _looks_like_browser_user_agent(raw) else ""
+
+
+def _is_cookie_metadata_key(key: str) -> bool:
+    return str(key or "").strip().lower() in {"__user_agent", "_user_agent", "useragent"}
+
+
+def _looks_like_browser_user_agent(value: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized.startswith("mozilla/5.0") and any(
+        marker in normalized for marker in ("chrome", "safari", "firefox", "edg", "mobile")
+    )
 
 
 def _masked_cookie_dict(cookies: Mapping[str, str]) -> str:

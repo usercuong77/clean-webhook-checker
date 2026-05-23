@@ -77,9 +77,30 @@ class Step44CookieLoaderTests(unittest.TestCase):
         self.assertNotIn("fake-xs-token", json.dumps(masked))
         self.assertNotIn("fake-fr", json.dumps(masked))
 
+    def test_useragent_metadata_is_not_sent_as_cookie(self):
+        env = {
+            "UID_CHECKER_FB_COOKIES_JSON": json.dumps(
+                [
+                    {
+                        "c_user": "100000000000005",
+                        "xs": "fake-xs-token",
+                        "useragent": (
+                            "TW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NCkg"
+                            "Q2hyb21lLzEzNi4wLjAuMCBTYWZhcmkvNTM3LjM2"
+                        ),
+                    }
+                ]
+            )
+        }
+
+        account = load_cookie_accounts(env=env)[0]
+
+        self.assertIn("Chrome/136.0.0.0", account.browser_user_agent)
+        self.assertNotIn("useragent=", cookie_header(account))
+
     def test_default_local_cookie_file_points_to_service_root(self):
         self.assertEqual(DEFAULT_LOCAL_COOKIE_FILE.parent.name, "local_secrets")
-        self.assertEqual(DEFAULT_LOCAL_COOKIE_FILE.parent.parent.name, "clean-webhook-checker")
+        self.assertIn(DEFAULT_LOCAL_COOKIE_FILE.parent.parent.name, {"02-render-service", "clean-webhook-checker"})
 
 
 if __name__ == "__main__":

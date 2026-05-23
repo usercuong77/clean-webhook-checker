@@ -187,7 +187,11 @@ def _cookie_probe_url_priority(url: str) -> tuple[int, str]:
 
 def _cookie_header_candidates(account) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
-    for user_agent in COOKIE_UID_USER_AGENTS:
+    user_agents = list(COOKIE_UID_USER_AGENTS)
+    browser_user_agent = getattr(account, "browser_user_agent", "")
+    if browser_user_agent:
+        user_agents = [browser_user_agent, *[item for item in user_agents if item != browser_user_agent]]
+    for user_agent in user_agents:
         headers = {
             "User-Agent": user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",

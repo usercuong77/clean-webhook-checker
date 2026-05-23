@@ -961,6 +961,8 @@ def _cookie_mobile_headers(account) -> dict[str, str]:
 
 def _cookie_desktop_headers(account) -> dict[str, str]:
     headers = _public_headers()
+    if getattr(account, "browser_user_agent", ""):
+        headers["User-Agent"] = account.browser_user_agent
     headers["Cookie"] = cookie_header(account)
     headers["Cache-Control"] = "no-cache"
     headers["Pragma"] = "no-cache"
