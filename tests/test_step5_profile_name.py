@@ -496,6 +496,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         fetch_limited.side_effect = [
             _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
             _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
+            _fetch_result(200, "<title>Facebook</title>", target + "/about", "ok"),
             _fetch_result(200, '<meta property="og:title" content="Thanh Duyen">', target, "ok"),
         ]
 
@@ -508,7 +509,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertTrue(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "cookie")
         self.assertEqual(cookie_candidates.call_args.args[0], target)
-        self.assertEqual(fetch_limited.call_count, 3)
+        self.assertEqual(fetch_limited.call_count, 4)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")
@@ -532,6 +533,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         fetch_limited.side_effect = [
             _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
             _fetch_result(200, "<title>Facebook</title>", target, "ok"),
+            _fetch_result(200, "<title>Facebook</title>", target + "/about", "ok"),
             _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
             _fetch_result(200, '<meta property="og:title" content="VTV24 Verified account">', target, "ok"),
         ]
@@ -545,7 +547,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertTrue(result["verified"])
         self.assertFalse(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "no_cookie")
-        self.assertEqual(fetch_limited.call_count, 4)
+        self.assertEqual(fetch_limited.call_count, 5)
         cookie_candidates.assert_not_called()
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
@@ -567,6 +569,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         fetch_limited.side_effect = [
             _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
             _fetch_result(200, "<title>Facebook</title>", target, "ok"),
+            _fetch_result(200, "<title>Facebook</title>", target + "/about", "ok"),
             _fetch_result(200, '<meta property="og:title" content="Thanh Duyen Verified account">', target, "ok"),
         ]
 
@@ -583,7 +586,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertTrue(result["verified"])
         self.assertTrue(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "cookie")
-        self.assertEqual(fetch_limited.call_count, 3)
+        self.assertEqual(fetch_limited.call_count, 4)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")

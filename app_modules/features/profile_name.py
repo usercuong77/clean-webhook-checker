@@ -688,18 +688,21 @@ def _profile_tick_results_from_candidate(
     if not target:
         return results
     seen = seen_unwrapped if seen_unwrapped is not None else set()
-    key = f"{header_label}|{target.lower()}"
-    if key in seen:
-        return results
-    seen.add(key)
+    retry_uid = raw_uid or extract_uid_from_url(target)
+    retry_username = raw_username or extract_username_from_url(target)
+    retry_urls = _fast_profile_tick_urls(target, retry_uid, retry_username) or [target]
+    for retry_url in retry_urls:
+        key = f"{header_label}|{retry_url.lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
 
-    retry_fetch = _fetch_limited_text(target, headers, timeout, max_bytes)
-    results.append(
-        _profile_tick_result_from_fetch(
+        retry_fetch = _fetch_limited_text(retry_url, headers, timeout, max_bytes)
+        result = _profile_tick_result_from_fetch(
             fetch=retry_fetch,
-            raw_uid=raw_uid or extract_uid_from_url(target),
-            raw_username=raw_username or extract_username_from_url(target),
-            fallback_canonical_url=target,
+            raw_uid=retry_uid,
+            raw_username=retry_username,
+            fallback_canonical_url=retry_url,
             source=source,
             reason_prefix=f"{reason_prefix}_login_next",
             header_label=header_label,
@@ -707,8 +710,10 @@ def _profile_tick_results_from_candidate(
             probes=probes,
             cookie_account=cookie_account,
         )
-    )
-    probes[-1]["loginNextTarget"] = target
+        results.append(result)
+        probes[-1]["loginNextTarget"] = target
+        if result.verified_label:
+            return results
     return results
 
 
