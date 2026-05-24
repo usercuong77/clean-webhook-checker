@@ -1188,6 +1188,8 @@ def _public_tick_miss_is_terminal(result: ProfileTickResult) -> bool:
     if result.name or result.verified_label or result.used_cookie:
         return False
     reason = str(result.reason or "").lower()
+    if "login_next" in reason:
+        return False
     return any(
         marker in reason
         for marker in (
