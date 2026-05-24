@@ -277,8 +277,17 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
             timeout=timeout,
             probes=probes,
         )
-        if public.name or public.verified_label:
+        if public.verified_label:
             return public
+        if public.name:
+            if _should_cookie_confirm_public_name_only(normalized):
+                public_name_result = public
+                normalized = public.canonical_url or normalized
+                uid = public.uid or uid
+                username = public.username or username
+                canonical_url = _canonical_profile_tick_url(normalized, uid)
+            else:
+                return public
         if _public_tick_miss_is_terminal(public):
             return public
         unwrapped = _first_login_next_target_from_probes(probes)
@@ -344,6 +353,8 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         if public_name_result:
             return public_name_result
         return cookie
+    if public_name_result:
+        return public_name_result
     if cookie.used_cookie:
         return cookie
 
@@ -390,6 +401,11 @@ def _normalize_profile_tick_input(raw_input: str) -> str:
             return f"https://www.facebook.com/profile.php?id={uid}"
 
     return _canonical_facebook_profile_input_url(normalized)
+
+
+def _should_cookie_confirm_public_name_only(normalized: str) -> bool:
+    value = str(normalized or "").lower()
+    return "/share/" in value or "profile.php" in value
 
 
 def _canonical_facebook_profile_input_url(url: str) -> str:
