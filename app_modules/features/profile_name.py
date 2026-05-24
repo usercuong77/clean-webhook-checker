@@ -688,7 +688,7 @@ def _profile_tick_results_from_candidate(
     if not target:
         return results
     seen = seen_unwrapped if seen_unwrapped is not None else set()
-    key = target.lower()
+    key = f"{header_label}|{target.lower()}"
     if key in seen:
         return results
     seen.add(key)
