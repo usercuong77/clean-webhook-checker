@@ -249,8 +249,8 @@ class Step5ProfileNameTests(unittest.TestCase):
 
         self.assertEqual(result["name"], "Cookie Name")
         self.assertTrue(result["verified"])
-        self.assertTrue(result["usedCookie"])
-        self.assertEqual(result["checkTickMode"], "cookie")
+        self.assertFalse(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "no_cookie")
         self.assertEqual(fetch_limited.call_count, 2)
 
     def test_checktick_public_candidates_use_fast_profile_urls_only(self):
@@ -264,10 +264,15 @@ class Step5ProfileNameTests(unittest.TestCase):
             [url for url, _headers, _label in candidates],
             [
                 "https://www.facebook.com/fast.user",
+                "https://www.facebook.com/fast.user",
+                "https://www.facebook.com/fast.user/about",
                 "https://www.facebook.com/fast.user/about",
             ],
         )
-        self.assertEqual({label for _url, _headers, label in candidates}, {"facebookcatalog"})
+        self.assertEqual(
+            [label for _url, _headers, label in candidates],
+            ["facebookcatalog", "facebookexternalhit", "facebookcatalog", "facebookexternalhit"],
+        )
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")
@@ -424,17 +429,21 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(cookie_candidates.call_args_list[-1].args[0], profile_url)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
     def test_checktick_force_cookie_can_confirm_verified_on_second_cookie(
         self,
         fetch_limited,
         load_accounts,
+        public_candidates,
         cookie_candidates,
     ):
         load_accounts.return_value = [_cookie_account("100000000000001"), _cookie_account("100000000000002")]
+        public_candidates.return_value = [("https://www.facebook.com/cookie.verify", {}, "public")]
         cookie_candidates.return_value = [("https://www.facebook.com/cookie.verify", {}, "cookie")]
         fetch_limited.side_effect = [
+            _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/cookie.verify", "ok"),
             _fetch_result(
                 200,
                 '<meta property="og:title" content="Cookie Name">',
@@ -461,7 +470,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result["name"], "Cookie Name")
         self.assertTrue(result["verified"])
         self.assertTrue(result["usedCookie"])
-        self.assertEqual(fetch_limited.call_count, 2)
+        self.assertEqual(fetch_limited.call_count, 3)
         self.assertEqual(cookie_candidates.call_count, 2)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
@@ -502,15 +511,24 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(fetch_limited.call_count, 3)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
-    def test_checktick_force_cookie_retries_login_next_target(self, fetch_limited, load_accounts, cookie_candidates):
+    def test_checktick_force_cookie_retries_login_next_target(
+        self,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
         target = "https://www.facebook.com/thanh.duyen.37570"
         login_url = "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Fthanh.duyen.37570"
         load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [("https://www.facebook.com/share/1BUu51wPpb/", {}, "public")]
         cookie_candidates.return_value = [("https://www.facebook.com/share/1BUu51wPpb/", {}, "cookie")]
         fetch_limited.side_effect = [
             _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
+            _fetch_result(200, "<title>Facebook</title>", target, "ok"),
             _fetch_result(200, '<meta property="og:title" content="Thanh Duyen Verified account">', target, "ok"),
         ]
 
@@ -527,7 +545,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertTrue(result["verified"])
         self.assertTrue(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "cookie")
-        self.assertEqual(fetch_limited.call_count, 2)
+        self.assertEqual(fetch_limited.call_count, 3)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")
@@ -603,8 +621,9 @@ class Step5ProfileNameTests(unittest.TestCase):
 
         self.assertEqual(result["name"], "Cookie Only")
         self.assertTrue(result["verified"])
-        self.assertTrue(result["usedCookie"])
-        self.assertEqual(result["checkTickMode"], "cookie")
+        self.assertFalse(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "no_cookie")
+        self.assertEqual(load_accounts.call_count, 0)
 
     @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
     def test_live_falls_back_to_username_when_name_missing(self, load_accounts):

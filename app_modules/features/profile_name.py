@@ -117,7 +117,7 @@ COMMENT_CONTEXT_MARKERS = (
     "feedback_comment",
     "comment_list",
 )
-TICK_PUBLIC_READ_CAP_BYTES = 750_000
+TICK_PUBLIC_READ_CAP_BYTES = 1_800_000
 TICK_COOKIE_READ_CAP_BYTES = 950_000
 TICK_COOKIE_PROFILE_UID_READ_CAP_BYTES = 3_400_000
 PROFILE_TICK_VERIFIED_MARKERS = (
@@ -267,6 +267,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
     probes: list[dict[str, Any]] = []
     timeout = _profile_tick_request_timeout(force_cookie)
 
+    public_name_result: ProfileTickResult | None = None
     if not force_cookie:
         public = _resolve_profile_tick_no_cookie(
             normalized=normalized,
@@ -286,6 +287,32 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
             uid = extract_uid_from_url(normalized) or uid
             username = extract_username_from_url(normalized) or username
             canonical_url = _canonical_profile_tick_url(normalized, uid)
+    else:
+        public = _resolve_profile_tick_no_cookie(
+            normalized=normalized,
+            uid=uid,
+            username=username,
+            canonical_url=canonical_url,
+            timeout=timeout,
+            probes=probes,
+        )
+        if public.verified_label:
+            return public
+        if _public_tick_miss_is_terminal(public):
+            return public
+        if public.name:
+            public_name_result = public
+            normalized = public.canonical_url or normalized
+            uid = public.uid or uid
+            username = public.username or username
+            canonical_url = _canonical_profile_tick_url(normalized, uid)
+        else:
+            unwrapped = _first_login_next_target_from_probes(probes)
+            if unwrapped:
+                normalized = unwrapped
+                uid = extract_uid_from_url(normalized) or uid
+                username = extract_username_from_url(normalized) or username
+                canonical_url = _canonical_profile_tick_url(normalized, uid)
 
     cookie = _resolve_profile_tick_with_cookie(
         normalized=normalized,
@@ -296,7 +323,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         probes=probes,
         forced=force_cookie,
     )
-    if cookie.name or cookie.verified_label or force_cookie:
+    if cookie.name or cookie.verified_label:
         return cookie
     redirected_target = _first_profile_redirect_target_from_probes(probes, normalized)
     if redirected_target:
@@ -313,6 +340,10 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         )
         if retry.name or retry.verified_label or retry.used_cookie:
             return retry
+    if force_cookie:
+        if public_name_result:
+            return public_name_result
+        return cookie
     if cookie.used_cookie:
         return cookie
 
@@ -506,15 +537,18 @@ def _resolve_profile_tick_with_cookie(
 
 def _public_tick_probe_candidates(normalized: str, uid: str, username: str) -> list[tuple[str, dict[str, str], str]]:
     urls = _fast_profile_tick_urls(normalized, uid, username)
-    headers = _facebook_catalog_headers()
     out: list[tuple[str, dict[str, str], str]] = []
     seen: set[str] = set()
     for url in urls:
-        key = f"facebookcatalog|{url}"
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append((url, dict(headers), "facebookcatalog"))
+        for label, headers in (
+            ("facebookcatalog", _facebook_catalog_headers()),
+            ("facebookexternalhit", _facebook_externalhit_headers()),
+        ):
+            key = f"{label}|{url}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((url, dict(headers), label))
     return out
 
 
