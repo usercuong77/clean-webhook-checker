@@ -90,6 +90,34 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertIn("https://mbasic.facebook.com/test.user", urls)
         self.assertIn("https://www.facebook.com/profile.php?id=100000000000001", urls)
 
+    def test_checktick_normalizes_profile_uid_input(self):
+        target = profile_name_module._normalize_profile_tick_input(
+            " https://www.facebook.com/profile.php?id=1000037073983819&sk=about# "
+        )
+
+        self.assertEqual(target, "https://www.facebook.com/profile.php?id=1000037073983819")
+
+    def test_checktick_normalizes_username_input(self):
+        target = profile_name_module._normalize_profile_tick_input(
+            "https://m.facebook.com/thanh.duyen.37570?comment_id=abc#"
+        )
+
+        self.assertEqual(target, "https://www.facebook.com/thanh.duyen.37570")
+
+    def test_checktick_normalizes_login_next_input(self):
+        target = profile_name_module._normalize_profile_tick_input(
+            "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Fprofile.php%3Fid%3D100003717317472%26sk%3Dabout"
+        )
+
+        self.assertEqual(target, "https://www.facebook.com/profile.php?id=100003717317472")
+
+    def test_checktick_keeps_share_input_canonical(self):
+        target = profile_name_module._normalize_profile_tick_input(
+            "https://www.facebook.com/share/18NhB6zRpS/?comment_id=abc#frag"
+        )
+
+        self.assertEqual(target, "https://www.facebook.com/share/18NhB6zRpS")
+
     @patch("app_modules.features.profile_name.load_cookie_accounts", return_value=[])
     def test_resolve_profile_name_falls_back_to_resolver_name(self, load_accounts):
         result = resolve_profile_name(

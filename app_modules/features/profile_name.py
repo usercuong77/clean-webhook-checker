@@ -92,6 +92,7 @@ VERIFIED_MARKER_PATTERNS = [
     re.compile(r'"is_verified"\s*:\s*true', re.IGNORECASE),
     re.compile(r'"isVerified"\s*:\s*true', re.IGNORECASE),
 ]
+INVISIBLE_INPUT_CHARS_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE0E\uFE0F]")
 PROFILE_HEADER_CONTEXT_MARKERS = (
     "profile_header_renderer",
     "profilecometheader",
@@ -259,7 +260,7 @@ def resolve_profile_name(resolved: ResolvedInput, include_verified: bool = False
 
 def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) -> ProfileTickResult:
     value = str(raw_input or "").strip()
-    normalized = normalize_url_input(value)
+    normalized = _normalize_profile_tick_input(value)
     uid = normalize_uid(value) or extract_uid_from_url(normalized)
     username = extract_username_from_url(normalized)
     canonical_url = _canonical_profile_tick_url(normalized, uid)
@@ -328,6 +329,63 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         probes=probes,
         used_cookie=False,
     )
+
+
+def _normalize_profile_tick_input(raw_input: str) -> str:
+    value = INVISIBLE_INPUT_CHARS_RE.sub("", str(raw_input or ""))
+    value = value.replace("\u00A0", " ").strip().strip("<>")
+    if not value:
+        return ""
+
+    direct_uid = normalize_uid(value)
+    if direct_uid:
+        return direct_uid
+
+    normalized = normalize_url_input(value)
+    login_target = _login_next_profile_target(normalized)
+    if login_target:
+        normalized = login_target
+
+    parsed = urlparse(normalized)
+    if not parsed.netloc:
+        return normalized
+    if not parsed.netloc.lower().endswith("facebook.com"):
+        return normalized
+
+    uid = extract_uid_from_url(normalized)
+    if uid:
+        path = (parsed.path or "").lower()
+        if "profile.php" in path or "/people/" in path:
+            return f"https://www.facebook.com/profile.php?id={uid}"
+
+    return _canonical_facebook_profile_input_url(normalized)
+
+
+def _canonical_facebook_profile_input_url(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    if not parsed.netloc or not parsed.netloc.lower().endswith("facebook.com"):
+        return str(url or "").strip()
+
+    path = parsed.path or "/"
+    lower_path = path.lower()
+    if lower_path.startswith("/login"):
+        return _login_next_profile_target(url) or str(url or "").strip()
+
+    if "profile.php" in lower_path:
+        uid = extract_uid_from_url(url)
+        if uid:
+            return f"https://www.facebook.com/profile.php?id={uid}"
+
+    if lower_path.startswith("/share/"):
+        clean_path = path.rstrip("/") or path
+        return urlunparse(("https", "www.facebook.com", clean_path, "", "", ""))
+
+    username = extract_username_from_url(url)
+    if username:
+        return urlunparse(("https", "www.facebook.com", f"/{username}", "", "", ""))
+
+    clean_path = path.rstrip("/") or "/"
+    return urlunparse(("https", "www.facebook.com", clean_path, "", "", ""))
 
 
 def _resolve_profile_tick_no_cookie(
