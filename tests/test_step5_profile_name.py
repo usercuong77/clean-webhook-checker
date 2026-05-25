@@ -626,12 +626,13 @@ class Step5ProfileNameTests(unittest.TestCase):
         cookie_candidates,
     ):
         profile_url = "https://www.facebook.com/profile.php?id=61561467565550"
+        people_url = "https://www.facebook.com/people/Do-Phung/pfbid0abc/"
         load_accounts.return_value = [_cookie_account()]
         public_candidates.return_value = [(profile_url, {}, "facebookcatalog")]
-        cookie_candidates.return_value = [(profile_url, {}, "cookie")]
+        cookie_candidates.return_value = [(people_url, {}, "cookie")]
         fetch_limited.side_effect = [
-            _fetch_result(200, '<meta property="og:title" content="Do Phung">', profile_url, "ok"),
-            _fetch_result(200, "<title>Facebook</title>", profile_url, "ok"),
+            _fetch_result(200, '<meta property="og:title" content="Do Phung">', people_url, "ok"),
+            _fetch_result(200, "<title>Facebook</title>", people_url, "ok"),
         ]
 
         result = check_tick_input(CheckRequest(input=profile_url, mode="1", includeName=True))
@@ -641,6 +642,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertFalse(result["verified"])
         self.assertFalse(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "no_cookie")
+        self.assertEqual(cookie_candidates.call_args.args[2], "")
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")

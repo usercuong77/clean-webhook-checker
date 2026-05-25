@@ -262,7 +262,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
     value = str(raw_input or "").strip()
     normalized = _normalize_profile_tick_input(value)
     uid = normalize_uid(value) or extract_uid_from_url(normalized)
-    username = extract_username_from_url(normalized)
+    username = _profile_tick_username_from_url(normalized)
     canonical_url = _canonical_profile_tick_url(normalized, uid)
     probes: list[dict[str, Any]] = []
     timeout = _profile_tick_request_timeout(force_cookie)
@@ -294,7 +294,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         if unwrapped:
             normalized = unwrapped
             uid = extract_uid_from_url(normalized) or uid
-            username = extract_username_from_url(normalized) or username
+            username = _profile_tick_username_from_url(normalized) or username
             canonical_url = _canonical_profile_tick_url(normalized, uid)
     else:
         public = _resolve_profile_tick_no_cookie(
@@ -320,7 +320,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
             if unwrapped:
                 normalized = unwrapped
                 uid = extract_uid_from_url(normalized) or uid
-                username = extract_username_from_url(normalized) or username
+                username = _profile_tick_username_from_url(normalized) or username
                 canonical_url = _canonical_profile_tick_url(normalized, uid)
 
     cookie = _resolve_profile_tick_with_cookie(
@@ -337,7 +337,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
     redirected_target = _first_profile_redirect_target_from_probes(probes, normalized)
     if redirected_target:
         retry_uid = extract_uid_from_url(redirected_target) or uid
-        retry_username = extract_username_from_url(redirected_target) or username
+        retry_username = _profile_tick_username_from_url(redirected_target) or username
         retry = _resolve_profile_tick_with_cookie(
             normalized=redirected_target,
             uid=retry_uid,
@@ -410,6 +410,23 @@ def _should_cookie_confirm_public_name_only(normalized: str) -> bool:
     return "/share/" in value or "profile.php" in value
 
 
+def _profile_tick_username_from_url(url: str) -> str:
+    value = str(url or "").strip()
+    parsed = urlparse(value)
+    if not parsed.netloc.lower().endswith("facebook.com"):
+        return ""
+    lower_path = (parsed.path or "/").lower()
+    if (
+        lower_path in {"/", "/people"}
+        or lower_path.startswith("/people/")
+        or lower_path.startswith("/login")
+        or lower_path.startswith("/share")
+        or "profile.php" in lower_path
+    ):
+        return ""
+    return extract_username_from_url(value)
+
+
 def _canonical_facebook_profile_input_url(url: str) -> str:
     parsed = urlparse(str(url or "").strip())
     if not parsed.netloc or not parsed.netloc.lower().endswith("facebook.com"):
@@ -429,7 +446,7 @@ def _canonical_facebook_profile_input_url(url: str) -> str:
         clean_path = path.rstrip("/") or path
         return urlunparse(("https", "www.facebook.com", clean_path, "", "", ""))
 
-    username = extract_username_from_url(url)
+    username = _profile_tick_username_from_url(url)
     if username:
         return urlunparse(("https", "www.facebook.com", f"/{username}", "", "", ""))
 
@@ -639,7 +656,7 @@ def _profile_tick_result_from_fetch(
     verified_label = extract_profile_verified_label(fetch.text, name)
     display_name = _display_profile_name_value(name)
     uid = raw_uid or extract_uid_from_url(fetch.final_url)
-    username = raw_username or extract_username_from_url(fetch.final_url)
+    username = raw_username or _profile_tick_username_from_url(fetch.final_url)
     canonical_url = fetch.final_url or fallback_canonical_url
     reason = _profile_tick_reason(reason_prefix, name, verified_label, fetch)
     probe = _probe_record(
@@ -707,7 +724,7 @@ def _profile_tick_results_from_candidate(
         return results
     seen = seen_unwrapped if seen_unwrapped is not None else set()
     retry_uid = raw_uid or extract_uid_from_url(target)
-    retry_username = raw_username or extract_username_from_url(target)
+    retry_username = raw_username or _profile_tick_username_from_url(target)
     retry_urls = _fast_profile_tick_urls(target, retry_uid, retry_username) or [target]
     for retry_url in retry_urls:
         key = f"{header_label}|{retry_url.lower()}"
@@ -774,7 +791,7 @@ def _profile_redirect_target(url: str) -> str:
         if uid:
             return f"https://www.facebook.com/profile.php?id={uid}"
         return ""
-    username = extract_username_from_url(value)
+    username = _profile_tick_username_from_url(value)
     if not username:
         return ""
     return urlunparse(("https", "www.facebook.com", f"/{username}", "", "", ""))
