@@ -449,7 +449,7 @@ def _normalize_profile_tick_input(raw_input: str) -> str:
 
     direct_uid = normalize_uid(value)
     if direct_uid:
-        return direct_uid
+        return f"https://www.facebook.com/profile.php?id={direct_uid}"
 
     normalized = normalize_url_input(value)
     login_target = _login_next_profile_target(normalized)

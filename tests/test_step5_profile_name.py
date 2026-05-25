@@ -97,6 +97,11 @@ class Step5ProfileNameTests(unittest.TestCase):
 
         self.assertEqual(target, "https://www.facebook.com/profile.php?id=1000037073983819")
 
+    def test_checktick_normalizes_raw_uid_like_profile_url(self):
+        target = profile_name_module._normalize_profile_tick_input("100077653645592")
+
+        self.assertEqual(target, "https://www.facebook.com/profile.php?id=100077653645592")
+
     def test_checktick_normalizes_username_input(self):
         target = profile_name_module._normalize_profile_tick_input(
             "https://m.facebook.com/thanh.duyen.37570?comment_id=abc#"
