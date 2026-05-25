@@ -253,7 +253,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result["checkTickMode"], "no_cookie")
         self.assertEqual(fetch_limited.call_count, 2)
 
-    def test_checktick_public_candidates_use_fast_profile_urls_only(self):
+    def test_checktick_public_candidates_include_mobile_page_variants(self):
         candidates = profile_name_module._public_tick_probe_candidates(
             "https://www.facebook.com/fast.user",
             "",
@@ -267,11 +267,38 @@ class Step5ProfileNameTests(unittest.TestCase):
                 "https://www.facebook.com/fast.user",
                 "https://www.facebook.com/fast.user/about",
                 "https://www.facebook.com/fast.user/about",
+                "https://m.facebook.com/fast.user",
+                "https://m.facebook.com/fast.user",
+                "https://m.facebook.com/fast.user/about",
+                "https://m.facebook.com/fast.user/about",
+                "https://mbasic.facebook.com/fast.user",
+                "https://mbasic.facebook.com/fast.user",
+                "https://mbasic.facebook.com/fast.user/about",
+                "https://mbasic.facebook.com/fast.user/about",
             ],
         )
         self.assertEqual(
             [label for _url, _headers, label in candidates],
-            ["facebookcatalog", "facebookexternalhit", "facebookcatalog", "facebookexternalhit"],
+            [
+                "facebookcatalog",
+                "facebookexternalhit",
+                "facebookcatalog",
+                "facebookexternalhit",
+                "facebookcatalog",
+                "facebookexternalhit",
+                "facebookcatalog",
+                "facebookexternalhit",
+                "facebookcatalog",
+                "facebookexternalhit",
+                "facebookcatalog",
+                "facebookexternalhit",
+            ],
+        )
+
+    def test_checktick_about_url_does_not_double_append_about(self):
+        self.assertEqual(
+            profile_name_module._profile_about_url("https://www.facebook.com/tintucvtv24/about"),
+            "https://www.facebook.com/tintucvtv24/about",
         )
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
@@ -298,6 +325,12 @@ class Step5ProfileNameTests(unittest.TestCase):
             ),
             _fetch_result(
                 200,
+                '<meta property="og:title" content="Cookie Name">',
+                "https://www.facebook.com/no.public.name",
+                "ok",
+            ),
+            _fetch_result(
+                200,
                 '<meta property="og:title" content="Cookie Name Verified account">',
                 "https://www.facebook.com/no.public.name",
                 "ok",
@@ -312,7 +345,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result["name"], "Cookie Name")
         self.assertTrue(result["verified"])
         self.assertTrue(result["usedCookie"])
-        self.assertEqual(fetch_limited.call_count, 3)
+        self.assertEqual(fetch_limited.call_count, 4)
         self.assertEqual(cookie_candidates.call_count, 2)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
@@ -371,6 +404,12 @@ class Step5ProfileNameTests(unittest.TestCase):
                 "https://www.facebook.com/thanh.duyen.37570/about",
                 "ok",
             ),
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="Thanh Duyen">',
+                "https://www.facebook.com/thanh.duyen.37570",
+                "ok",
+            ),
         ]
 
         result = check_tick_input(
@@ -381,7 +420,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result["name"], "Thanh Duyen")
         self.assertEqual(result["username"], "thanh.duyen.37570")
         self.assertTrue(result["usedCookie"])
-        self.assertEqual(fetch_limited.call_count, 6)
+        self.assertEqual(fetch_limited.call_count, 7)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")
@@ -452,6 +491,12 @@ class Step5ProfileNameTests(unittest.TestCase):
             ),
             _fetch_result(
                 200,
+                '<meta property="og:title" content="Cookie Name">',
+                "https://www.facebook.com/cookie.verify",
+                "ok",
+            ),
+            _fetch_result(
+                200,
                 '<meta property="og:title" content="Cookie Name Verified account">',
                 "https://www.facebook.com/cookie.verify",
                 "ok",
@@ -470,7 +515,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(result["name"], "Cookie Name")
         self.assertTrue(result["verified"])
         self.assertTrue(result["usedCookie"])
-        self.assertEqual(fetch_limited.call_count, 3)
+        self.assertEqual(fetch_limited.call_count, 4)
         self.assertEqual(cookie_candidates.call_count, 2)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
@@ -498,6 +543,7 @@ class Step5ProfileNameTests(unittest.TestCase):
             _fetch_result(200, "<title>Facebook</title>", login_url, "ok"),
             _fetch_result(200, "<title>Facebook</title>", target + "/about", "ok"),
             _fetch_result(200, '<meta property="og:title" content="Thanh Duyen">', target, "ok"),
+            _fetch_result(200, '<meta property="og:title" content="Thanh Duyen">', target, "ok"),
         ]
 
         result = check_tick_input(
@@ -509,7 +555,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertTrue(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "cookie")
         self.assertEqual(cookie_candidates.call_args.args[0], target)
-        self.assertEqual(fetch_limited.call_count, 4)
+        self.assertEqual(fetch_limited.call_count, 5)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")

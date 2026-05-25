@@ -120,6 +120,7 @@ COMMENT_CONTEXT_MARKERS = (
 TICK_PUBLIC_READ_CAP_BYTES = 1_800_000
 TICK_COOKIE_READ_CAP_BYTES = 950_000
 TICK_COOKIE_PROFILE_UID_READ_CAP_BYTES = 3_400_000
+TICK_COOKIE_DEEP_VERIFY_READ_CAP_BYTES = 3_600_000
 PROFILE_TICK_VERIFIED_MARKERS = (
     "verified account",
     "tài khoản đã xác minh",
@@ -445,6 +446,14 @@ def _share_name_only_no_cookie_retry_count() -> int:
     return max(0, min(configured, 2))
 
 
+def _public_tick_name_only_extra_probe_count() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_NAME_ONLY_EXTRA_PUBLIC_PROBES", "3"))
+    except ValueError:
+        configured = 3
+    return max(0, min(configured, 8))
+
+
 def _profile_tick_username_from_url(url: str) -> str:
     value = str(url or "").strip()
     parsed = urlparse(value)
@@ -499,7 +508,10 @@ def _resolve_profile_tick_no_cookie(
 ) -> ProfileTickResult:
     best_name_result: ProfileTickResult | None = None
     seen_unwrapped: set[str] = set()
+    extra_after_name = 0
+    max_extra_after_name = _public_tick_name_only_extra_probe_count()
     for url, headers, header_label in _public_tick_probe_candidates(normalized, uid, username):
+        had_name_before = best_name_result is not None
         results = _profile_tick_results_from_candidate(
             url=url,
             headers=headers,
@@ -522,6 +534,10 @@ def _resolve_profile_tick_no_cookie(
                 return result
             if result.name and best_name_result is None:
                 best_name_result = result
+        if best_name_result and had_name_before:
+            extra_after_name += 1
+            if extra_after_name >= max_extra_after_name:
+                break
 
     if best_name_result:
         return best_name_result
@@ -582,6 +598,19 @@ def _resolve_profile_tick_with_cookie(
                 if result.name and account_name_result is None:
                     account_name_result = result
         if account_name_result:
+            deep_result = _resolve_profile_tick_cookie_deep_verify(
+                normalized=normalized,
+                uid=uid,
+                username=username,
+                canonical_url=canonical_url,
+                timeout=timeout,
+                probes=probes,
+                account=account,
+                name_result=account_name_result,
+                forced=forced,
+            )
+            if deep_result and deep_result.verified_label:
+                return deep_result
             if best_name_result is None:
                 best_name_result = account_name_result
             if not forced:
@@ -605,8 +634,70 @@ def _resolve_profile_tick_with_cookie(
     )
 
 
+def _resolve_profile_tick_cookie_deep_verify(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+    account,
+    name_result: ProfileTickResult,
+    forced: bool,
+) -> ProfileTickResult | None:
+    headers = _cookie_desktop_headers(account)
+    reason_prefix = "cookie_forced_deep" if forced else "cookie_fallback_deep"
+    seen: set[str] = set()
+    for url in _deep_cookie_tick_urls(normalized, uid, username):
+        key = url.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        results = _profile_tick_results_from_candidate(
+            url=url,
+            headers=headers,
+            timeout=timeout,
+            max_bytes=_cookie_tick_deep_read_cap_bytes(),
+            raw_uid=uid,
+            raw_username=username,
+            fallback_canonical_url=canonical_url,
+            source="profile_tick_cookie",
+            reason_prefix=reason_prefix,
+            header_label="desktop_logged_in_deep",
+            used_cookie=True,
+            probes=probes,
+            cookie_account=account.masked_id,
+            seen_unwrapped=set(),
+        )
+        for result in results:
+            if result.verified_label:
+                if result.name:
+                    return result
+                return _merge_tick_name_with_verified(name_result, result)
+    return None
+
+
+def _merge_tick_name_with_verified(
+    name_result: ProfileTickResult,
+    verified_result: ProfileTickResult,
+) -> ProfileTickResult:
+    return ProfileTickResult(
+        name=name_result.name,
+        display_name=name_result.display_name or _display_profile_name_value(name_result.name),
+        verified_label=verified_result.verified_label,
+        uid=verified_result.uid or name_result.uid,
+        username=verified_result.username or name_result.username,
+        canonical_url=verified_result.canonical_url or name_result.canonical_url,
+        source=verified_result.source,
+        reason=f"{verified_result.reason}_with_name_context",
+        http_code=verified_result.http_code or name_result.http_code,
+        probes=verified_result.probes,
+        used_cookie=True,
+    )
+
+
 def _public_tick_probe_candidates(normalized: str, uid: str, username: str) -> list[tuple[str, dict[str, str], str]]:
-    urls = _fast_profile_tick_urls(normalized, uid, username)
+    urls = _public_tick_urls(normalized, uid, username)
     out: list[tuple[str, dict[str, str], str]] = []
     seen: set[str] = set()
     for url in urls:
@@ -626,6 +717,41 @@ def _cookie_tick_probe_candidates(normalized: str, uid: str, username: str, acco
     urls = _fast_profile_tick_urls(normalized, uid, username)
     headers = _cookie_desktop_headers(account)
     return [(url, dict(headers), "desktop_logged_in") for url in urls]
+
+
+def _public_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
+    urls = _fast_profile_tick_urls(normalized, uid, username)
+    if username and not uid:
+        safe_username = quote(username.strip("/"), safe=".")
+        urls.extend(
+            [
+                f"https://m.facebook.com/{safe_username}",
+                f"https://m.facebook.com/{safe_username}/about",
+                f"https://mbasic.facebook.com/{safe_username}",
+                f"https://mbasic.facebook.com/{safe_username}/about",
+            ]
+        )
+    return _unique(urls)
+
+
+def _deep_cookie_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
+    urls: list[str] = []
+    if normalized:
+        urls.append(_profile_main_url(normalized))
+    if username:
+        safe_username = quote(username.strip("/"), safe=".")
+        urls.append(f"https://www.facebook.com/{safe_username}")
+    if uid:
+        urls.append(f"https://www.facebook.com/profile.php?id={uid}")
+    return _unique([url for url in urls if url])
+
+
+def _cookie_tick_deep_read_cap_bytes() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_COOKIE_DEEP_READ_CAP_BYTES", "3600000"))
+    except ValueError:
+        configured = TICK_COOKIE_DEEP_VERIFY_READ_CAP_BYTES
+    return max(TICK_COOKIE_READ_CAP_BYTES, min(configured, 6_000_000))
 
 
 def _cookie_tick_read_cap_bytes(normalized: str, uid: str, username: str) -> int:
@@ -667,12 +793,32 @@ def _profile_about_url(url: str) -> str:
     value = str(url or "").strip().rstrip("/")
     if not value:
         return ""
+    parsed = urlparse(value)
+    if (parsed.path or "").lower().rstrip("/").endswith("/about"):
+        return value
     if "profile.php" in value:
         separator = "&" if "?" in value else "?"
         return f"{value}{separator}sk=about"
     if "/share/" in value.lower():
         return value
     return f"{value}/about"
+
+
+def _profile_main_url(url: str) -> str:
+    value = str(url or "").strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    path = parsed.path or "/"
+    lower_path = path.lower().rstrip("/")
+    if lower_path.endswith("/about"):
+        path = path[: -len("/about")] or "/"
+        return urlunparse((parsed.scheme or "https", parsed.netloc, path.rstrip("/") or "/", "", "", ""))
+    if "profile.php" in lower_path:
+        uid = extract_uid_from_url(value)
+        if uid:
+            return f"https://www.facebook.com/profile.php?id={uid}"
+    return value
 
 
 def _profile_tick_result_from_fetch(
