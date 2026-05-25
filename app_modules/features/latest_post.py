@@ -91,6 +91,8 @@ GENERIC_POST_CONTENT_FRAGMENTS = (
     "tham gia facebook để kết nối",
     "thuộc ban thời sự",
     "đài truyền hình việt nam",
+    "lượt thích",
+    "người đang nói về điều này",
 )
 
 INVISIBLE_INPUT_CHARS_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE0E\uFE0F]")
@@ -777,14 +779,14 @@ def is_facebook_social_context_content(content_raw: Any) -> bool:
 
 def is_trusted_no_cookie_latest_post(parsed_raw: Any, content_raw: Any) -> bool:
     parsed = parsed_raw if isinstance(parsed_raw, Mapping) else {}
-    timestamp = normalize_unix_timestamp_seconds(parsed.get("timestamp"))
-    if timestamp:
-        return True
     content = clean_facebook_post_content(content_raw)
     if not content:
         return False
     lowered = content.lower()
-    return not any(fragment in lowered for fragment in GENERIC_POST_CONTENT_FRAGMENTS)
+    if any(fragment in lowered for fragment in GENERIC_POST_CONTENT_FRAGMENTS):
+        return False
+    timestamp = normalize_unix_timestamp_seconds(parsed.get("timestamp"))
+    return bool(timestamp or len(content) >= 12)
 
 
 def has_latest_post_evidence_in_html(html_raw: Any, post_id_raw: Any) -> bool:

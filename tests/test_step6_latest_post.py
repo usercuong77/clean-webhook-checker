@@ -64,7 +64,13 @@ class Step6LatestPostTests(unittest.TestCase):
                 "A server error field_exception occured. Check server logs for details.",
             )
         )
-        self.assertTrue(is_trusted_no_cookie_latest_post({"postId": "123456789012345", "timestamp": 1760000000}, ""))
+        self.assertFalse(is_trusted_no_cookie_latest_post({"postId": "123456789012345", "timestamp": 1760000000}, ""))
+        self.assertTrue(
+            is_trusted_no_cookie_latest_post(
+                {"postId": "123456789012345", "timestamp": 1760000000},
+                "Direct latest post content",
+            )
+        )
 
     def test_extracts_profile_username_from_login_next_redirect(self):
         username = extract_profile_username_from_url(
@@ -179,6 +185,12 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(clean_facebook_post_content("7 \u0111ang theo d\u00f5i"), "")
         self.assertEqual(clean_facebook_post_content("39 \u0111ang theo d\u00f5i"), "")
         self.assertEqual(clean_facebook_post_content("VTV24 thu\u1ed9c Ban Th\u1eddi s\u1ef1, \u0110\u00e0i Truy\u1ec1n h\u00ecnh Vi\u1ec7t Nam"), "")
+        self.assertEqual(
+            clean_facebook_post_content(
+                "VTV24 - V\u00ec T\u1ea7m V\u00f3c Vi\u1ec7t, H\u00e0 N\u1ed9i. 348.445 l\u01b0\u1ee3t th\u00edch \u00b7 4.868 ng\u01b0\u1eddi \u0111ang n\u00f3i v\u1ec1 \u0111i\u1ec1u n\u00e0y."
+            ),
+            "",
+        )
 
     def test_analyze_latest_post_ownership_detects_tagged_actor(self):
         html = (
