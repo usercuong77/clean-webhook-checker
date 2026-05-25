@@ -599,14 +599,26 @@ def parse_latest_post_from_html(html_raw: Any) -> dict[str, Any] | None:
 
     post_id = ""
     timestamp = 0
+    best_pair_post_id = ""
+    best_pair_timestamp = 0
 
     for pattern in LATEST_POST_PAIR_PATTERNS:
-        match = re.search(pattern, html, flags=re.IGNORECASE)
-        if not match:
-            continue
-        post_id = str(match.group(1) or "").strip()
-        timestamp = normalize_unix_timestamp_seconds(match.group(2))
-        break
+        for match in re.finditer(pattern, html, flags=re.IGNORECASE):
+            candidate_post_id = str(match.group(1) or "").strip()
+            if not is_latest_post_id_token(candidate_post_id):
+                continue
+            candidate_timestamp = normalize_unix_timestamp_seconds(match.group(2))
+            if not best_pair_post_id:
+                best_pair_post_id = candidate_post_id
+                best_pair_timestamp = candidate_timestamp
+                continue
+            if candidate_timestamp and (not best_pair_timestamp or candidate_timestamp > best_pair_timestamp):
+                best_pair_post_id = candidate_post_id
+                best_pair_timestamp = candidate_timestamp
+
+    if best_pair_post_id:
+        post_id = best_pair_post_id
+        timestamp = best_pair_timestamp
 
     if not post_id:
         for pattern in LATEST_POST_ID_PATTERNS:

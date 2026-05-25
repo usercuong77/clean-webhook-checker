@@ -97,6 +97,18 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(parsed["postId"], "123456789012345")
         self.assertEqual(parsed["timestamp"], 1760000000)
 
+    def test_parse_latest_post_pair_prefers_newest_timestamp(self):
+        html = (
+            '"post_id":"111111111111111" abc "publish_time":1760000000'
+            ' noise '
+            '"post_id":"222222222222222" abc "publish_time":1760000099'
+        )
+
+        parsed = parse_latest_post_from_html(html)
+
+        self.assertEqual(parsed["postId"], "222222222222222")
+        self.assertEqual(parsed["timestamp"], 1760000099)
+
     def test_extract_content_near_post_id(self):
         html = (
             'noise "post_id":"123456789012345" '
