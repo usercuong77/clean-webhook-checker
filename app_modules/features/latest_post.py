@@ -236,6 +236,11 @@ def get_latest_post_direct_from_input(
         for url in probe_urls:
             for header_label, headers in _headers_for_candidate(candidate):
                 fetch = _fetch_text(url, headers, timeout)
+                discovered_uid = extract_direct_uid_from_facebook_url(fetch.final_url)
+                if discovered_uid:
+                    if not direct_uid:
+                        direct_uid = discovered_uid
+                    _prepend_direct_uid_probe_urls(probe_urls, discovered_uid)
                 discovered_username = extract_profile_username_from_url(fetch.final_url)
                 if discovered_username:
                     if not direct_username:
@@ -325,6 +330,22 @@ def _append_direct_username_probe_urls(probe_urls: list[str], username: str) -> 
             seen.add(key)
 
 
+def _prepend_direct_uid_probe_urls(probe_urls: list[str], uid: str) -> None:
+    clean_uid = normalize_uid(uid)
+    if not clean_uid:
+        return
+    additions = build_direct_latest_post_probe_urls(f"https://www.facebook.com/profile.php?id={clean_uid}")
+    seen = {str(url or "").strip().lower() for url in probe_urls}
+    to_add: list[str] = []
+    for url in additions:
+        key = str(url or "").strip().lower()
+        if key and key not in seen:
+            to_add.append(url)
+            seen.add(key)
+    if to_add:
+        probe_urls[:0] = to_add
+
+
 def sanitize_latest_post_input(input_raw: Any) -> str:
     value = INVISIBLE_INPUT_CHARS_RE.sub("", str(input_raw or ""))
     value = value.replace("\u00A0", " ").strip()
@@ -359,8 +380,8 @@ def build_direct_latest_post_probe_urls(input_raw: Any) -> list[str]:
         uid_values = query.get("id") or []
         uid = normalize_uid(uid_values[0] if uid_values else "")
         if uid:
-            urls.append(f"https://www.facebook.com/profile.php?id={quote(uid, safe='')}&sk=posts")
             urls.append(f"https://www.facebook.com/profile.php?id={quote(uid, safe='')}")
+            urls.append(f"https://www.facebook.com/profile.php?id={quote(uid, safe='')}&sk=posts")
     else:
         base = urlunsplit((parsed.scheme or "https", parsed.netloc or "www.facebook.com", path, "", ""))
         urls.append(_with_query_param(base, "sk=posts"))

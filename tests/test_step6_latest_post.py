@@ -81,6 +81,14 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(urls[0], "https://www.facebook.com/phuc121296?sk=posts")
         self.assertIn("https://www.facebook.com/phuc121296", urls)
 
+    def test_build_direct_latest_post_urls_prefer_profile_uid_base_before_posts_tab(self):
+        urls = build_direct_latest_post_probe_urls(
+            "https://www.facebook.com/profile.php?id=100003717317472"
+        )
+
+        self.assertEqual(urls[0], "https://www.facebook.com/profile.php?id=100003717317472")
+        self.assertEqual(urls[1], "https://www.facebook.com/profile.php?id=100003717317472&sk=posts")
+
     def test_parse_latest_post_pair(self):
         html = '"post_id":"123456789012345" abc "publish_time":1760000000'
 
@@ -323,7 +331,7 @@ class Step6LatestPostTests(unittest.TestCase):
             FetchResult(
                 200,
                 "Log in or sign up to view",
-                "https://www.facebook.com/profile.php?id=100037073983819&sk=posts",
+                "https://www.facebook.com/profile.php?id=100037073983819",
                 "ok",
             ),
             FetchResult(
@@ -360,6 +368,37 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(fetch_text.call_count, 4)
         called_urls = [call.args[0] for call in fetch_text.call_args_list]
         self.assertIn("https://www.facebook.com/thanh.duyen.37570?sk=posts", called_urls)
+
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_share_redirect_retries_profile_uid_with_cookie(self, fetch_text, load_cookie_accounts):
+        load_cookie_accounts.return_value = [_cookie_account()]
+        fetch_text.side_effect = [
+            FetchResult(
+                200,
+                "checkpoint",
+                "https://www.facebook.com/profile.php?id=100003717317472&rdid=abc&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1Ktp9U1VMF%2F",
+                "ok",
+            ),
+            FetchResult(
+                200,
+                (
+                    '"post_id":"3651761724957702"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Redirected share profile latest post"}'
+                ),
+                "https://www.facebook.com/profile.php?id=100003717317472",
+                "ok",
+            ),
+        ]
+
+        payload = get_latest_post_direct_from_input("https://www.facebook.com/share/1Ktp9U1VMF/")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["uid"], "100003717317472")
+        self.assertEqual(payload["content"], "Redirected share profile latest post")
+        called_urls = [call.args[0] for call in fetch_text.call_args_list]
+        self.assertEqual(called_urls[1], "https://www.facebook.com/profile.php?id=100003717317472")
 
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
