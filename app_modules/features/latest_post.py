@@ -87,6 +87,8 @@ GENERIC_POST_CONTENT_FRAGMENTS = (
     "public figure",
     "kênh thông tin chính thức",
     "trên mạng xã hội",
+    "đang ở trên facebook",
+    "tham gia facebook để kết nối",
 )
 
 INVISIBLE_INPUT_CHARS_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE0E\uFE0F]")
@@ -1073,8 +1075,16 @@ def repair_facebook_mojibake_text(value_raw: Any) -> str:
 
 
 def _mojibake_score(text: str) -> int:
-    markers = ("Ã", "Â", "Ä", "Å", "Æ", "â€", "â€™", "â€œ", "â€", "áº", "á»", "Ä‘", "Æ°", "Æ¡")
-    return sum(text.count(marker) for marker in markers)
+    score = 0
+    for char in text:
+        code = ord(char)
+        if 0x80 <= code <= 0x9F:
+            score += 4
+        elif code in {0x00C2, 0x00C3, 0x00C4, 0x00C5, 0x00C6, 0x00E1, 0x00E2}:
+            score += 2
+        elif code in {0x00BA, 0x00BB, 0x00B0, 0x00A1, 0x00A3, 0x00A9, 0x00B1, 0x00B4, 0x00B5}:
+            score += 1
+    return score
 
 
 def extract_meta_content_from_html(html_raw: Any, attr_name: str, attr_value: str) -> str:

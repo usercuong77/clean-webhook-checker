@@ -163,12 +163,17 @@ class Step6LatestPostTests(unittest.TestCase):
         mojibake = "T\u00e1\u00ba\u00a1i c\u00c3\u00a1c x\u00c3\u00a3 mi\u00e1\u00bb\u0081n n\u00c3\u00bai"
 
         self.assertEqual(clean_facebook_post_content(mojibake), "T\u1ea1i c\u00e1c x\u00e3 mi\u1ec1n n\u00fai")
+        self.assertEqual(clean_facebook_post_content("Ti\u00e1\u00bb\u0083u th\u00c6\u00b0"), "Ti\u1ec3u th\u01b0")
 
     def test_clean_post_content_rejects_profile_metadata(self):
         self.assertEqual(clean_facebook_post_content("News & media website"), "")
         self.assertEqual(clean_facebook_post_content("348K ng\u01b0\u1eddi theo d\u00f5i"), "")
         self.assertEqual(
             clean_facebook_post_content("K\u00eanh th\u00f4ng tin ch\u00ednh th\u1ee9c c\u1ee7a VTVcab tr\u00ean m\u1ea1ng x\u00e3 h\u1ed9i\nEmail: test@example.com"),
+            "",
+        )
+        self.assertEqual(
+            clean_facebook_post_content("\u0110\u1ed7 Ph\u00f9ng \u0111ang \u1edf tr\u00ean Facebook. Tham gia Facebook \u0111\u1ec3 k\u1ebft n\u1ed1i"),
             "",
         )
 
