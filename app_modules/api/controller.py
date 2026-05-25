@@ -82,6 +82,7 @@ def health_payload() -> dict[str, Any]:
         "ok": True,
         "service": config.app_name,
         "version": config.version,
+        "codeVersion": "step109-checkpost-content-filter",
     }
 
 
