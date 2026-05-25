@@ -178,8 +178,11 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(tick_payload["checkTickMode"], "no_cookie")
 
     @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._profile_tick_confirm_any_name_only", return_value=False)
     @patch("app_modules.features.profile_name._fetch_limited_text")
-    def test_checktick_returns_no_cookie_result_without_cookie_fallback(self, fetch_limited, load_accounts):
+    def test_checktick_returns_no_cookie_result_without_cookie_fallback(
+        self, fetch_limited, confirm_any_name_only, load_accounts
+    ):
         load_accounts.return_value = [_cookie_account()]
         fetch_limited.return_value = _fetch_result(
             200,
@@ -370,9 +373,12 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(fetch_limited.call_count, 2)
         self.assertEqual(cookie_candidates.call_count, 1)
 
+    @patch("app_modules.features.profile_name._profile_tick_final_public_retry_count", return_value=0)
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
-    def test_checktick_profile_php_retries_redirected_username_about(self, fetch_limited, load_accounts):
+    def test_checktick_profile_php_retries_redirected_username_about(
+        self, fetch_limited, load_accounts, final_public_retry_count
+    ):
         load_accounts.return_value = [_cookie_account()]
         fetch_limited.side_effect = [
             _fetch_result(200, "<title>Facebook</title>", "https://www.facebook.com/profile.php?id=100037073983819", "ok"),
@@ -510,6 +516,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(fetch_limited.call_count, 4)
         self.assertEqual(cookie_candidates.call_count, 2)
 
+    @patch("app_modules.features.profile_name._profile_tick_final_public_retry_count", return_value=0)
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")
     @patch("app_modules.features.profile_name.load_cookie_accounts")
@@ -520,6 +527,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         load_accounts,
         public_candidates,
         cookie_candidates,
+        final_public_retry_count,
     ):
         target = "https://www.facebook.com/thanh.duyen.37570"
         login_url = (
@@ -639,6 +647,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         fetch_limited.side_effect = [
             _fetch_result(200, '<meta property="og:title" content="VTV24">', target, "ok"),
             _fetch_result(200, '<meta property="og:title" content="VTV24">', target, "ok"),
+            _fetch_result(200, '<meta property="og:title" content="VTV24">', target, "ok"),
             _fetch_result(200, '<meta property="og:title" content="VTV24 Verified account">', target, "ok"),
         ]
 
@@ -651,7 +660,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertTrue(result["verified"])
         self.assertTrue(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "cookie")
-        self.assertEqual(fetch_limited.call_count, 3)
+        self.assertEqual(fetch_limited.call_count, 4)
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")
@@ -698,9 +707,11 @@ class Step5ProfileNameTests(unittest.TestCase):
     ):
         profile_url = "https://www.facebook.com/profile.php?id=61561467565550"
         people_url = "https://www.facebook.com/people/Do-Phung/pfbid0abc/"
-        load_accounts.return_value = [_cookie_account()]
+        load_accounts.return_value = []
         public_candidates.return_value = [(profile_url, {}, "facebookcatalog")]
         fetch_limited.side_effect = [
+            _fetch_result(200, '<meta property="og:title" content="Do Phung">', people_url, "ok"),
+            _fetch_result(200, '<meta property="og:title" content="Do Phung">', people_url, "ok"),
             _fetch_result(200, '<meta property="og:title" content="Do Phung">', people_url, "ok"),
         ]
 

@@ -360,7 +360,20 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         probes=probes,
         forced=force_cookie,
     )
-    if cookie.name or cookie.verified_label:
+    if cookie.verified_label:
+        return cookie
+    if cookie.name:
+        public_verified = _retry_public_tick_for_verified(
+            normalized=normalized,
+            uid=uid,
+            username=username,
+            canonical_url=canonical_url,
+            timeout=timeout,
+            probes=probes,
+            name_result=cookie,
+        )
+        if public_verified:
+            return public_verified
         return cookie
     redirected_target = _first_profile_redirect_target_from_probes(probes, normalized)
     if redirected_target:
@@ -403,6 +416,31 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
     )
 
 
+def _retry_public_tick_for_verified(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+    name_result: ProfileTickResult,
+) -> ProfileTickResult | None:
+    for _ in range(_profile_tick_final_public_retry_count()):
+        retry = _resolve_profile_tick_no_cookie(
+            normalized=normalized,
+            uid=uid,
+            username=username,
+            canonical_url=canonical_url,
+            timeout=timeout,
+            probes=probes,
+        )
+        if retry.verified_label:
+            if retry.name:
+                return retry
+            return _merge_tick_name_with_verified(name_result, retry)
+    return None
+
+
 def _normalize_profile_tick_input(raw_input: str) -> str:
     value = INVISIBLE_INPUT_CHARS_RE.sub("", str(raw_input or ""))
     value = value.replace("\u00A0", " ").strip().strip("<>")
@@ -440,12 +478,27 @@ def _should_cookie_confirm_public_name_only(normalized: str) -> bool:
 
 def _should_confirm_public_name_only_result(normalized: str, result: ProfileTickResult) -> bool:
     reason = str(result.reason or "").lower()
+    if _profile_tick_confirm_any_name_only():
+        return bool(result.name)
     return _should_cookie_confirm_public_name_only(normalized) or "login_next_name_found" in reason
+
+
+def _profile_tick_confirm_any_name_only() -> bool:
+    value = str(os.getenv("PROFILE_TICK_CONFIRM_ANY_NAME_ONLY", "1") or "").strip().lower()
+    return value not in {"0", "false", "off", "no"}
 
 
 def _share_name_only_no_cookie_retry_count() -> int:
     try:
-        configured = int(os.getenv("PROFILE_TICK_SHARE_NAME_RETRY_COUNT", "1"))
+        configured = int(os.getenv("PROFILE_TICK_SHARE_NAME_RETRY_COUNT", "2"))
+    except ValueError:
+        configured = 2
+    return max(0, min(configured, 2))
+
+
+def _profile_tick_final_public_retry_count() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_FINAL_PUBLIC_RETRY_COUNT", "1"))
     except ValueError:
         configured = 1
     return max(0, min(configured, 2))
