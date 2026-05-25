@@ -164,6 +164,14 @@ class Step6LatestPostTests(unittest.TestCase):
 
         self.assertEqual(clean_facebook_post_content(mojibake), "T\u1ea1i c\u00e1c x\u00e3 mi\u1ec1n n\u00fai")
 
+    def test_clean_post_content_rejects_profile_metadata(self):
+        self.assertEqual(clean_facebook_post_content("News & media website"), "")
+        self.assertEqual(clean_facebook_post_content("348K ng\u01b0\u1eddi theo d\u00f5i"), "")
+        self.assertEqual(
+            clean_facebook_post_content("K\u00eanh th\u00f4ng tin ch\u00ednh th\u1ee9c c\u1ee7a VTVcab tr\u00ean m\u1ea1ng x\u00e3 h\u1ed9i\nEmail: test@example.com"),
+            "",
+        )
+
     def test_analyze_latest_post_ownership_detects_tagged_actor(self):
         html = (
             '<meta property="al:android:url" content="fb://profile/100005122057274">'

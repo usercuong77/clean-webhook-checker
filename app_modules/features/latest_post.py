@@ -79,6 +79,14 @@ GENERIC_POST_CONTENT_FRAGMENTS = (
     "check server logs for details",
     "unsupported browser",
     "browser isn't supported",
+    "news & media website",
+    "arts & entertainment",
+    "digital creator",
+    "video creator",
+    "media/news company",
+    "public figure",
+    "kênh thông tin chính thức",
+    "trên mạng xã hội",
 )
 
 INVISIBLE_INPUT_CHARS_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE0E\uFE0F]")
@@ -1017,6 +1025,8 @@ def clean_facebook_post_content(value_raw: Any) -> str:
     lowered = text.lower()
     if lowered in GENERIC_POST_CONTENT_EXACT:
         return ""
+    if is_profile_metadata_content(text):
+        return ""
     generic_prefixes = (
         "log in or sign up to view",
         "see posts, photos and more on facebook",
@@ -1025,6 +1035,26 @@ def clean_facebook_post_content(value_raw: Any) -> str:
     if len(text) < 180 and any(lowered.startswith(item) for item in generic_prefixes):
         return ""
     return text
+
+
+def is_profile_metadata_content(value_raw: Any) -> bool:
+    text = str(value_raw or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if any(fragment in lowered for fragment in GENERIC_POST_CONTENT_FRAGMENTS):
+        return True
+    if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:k|m|triệu|nghìn)?\s+người theo dõi\b", lowered):
+        return True
+    if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:k|m)?\s+followers\b", lowered):
+        return True
+    if len(text) <= 45 and lowered in {"phan rang- thap cham", "dám nghĩ dám làm"}:
+        return True
+    if len(text) <= 180 and ("email:" in lowered or "gmail.com" in lowered) and (
+        "kênh thông tin" in lowered or "trung tâm" in lowered or "official" in lowered
+    ):
+        return True
+    return False
 
 
 def repair_facebook_mojibake_text(value_raw: Any) -> str:
