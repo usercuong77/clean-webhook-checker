@@ -497,7 +497,6 @@ class Step6LatestPostTests(unittest.TestCase):
         fetch_text.side_effect = [
             FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/test.user?sk=posts", "ok"),
             FetchResult(200, "checkpoint", "https://www.facebook.com/test.user?sk=posts", "ok"),
-            FetchResult(200, "checkpoint", "https://www.facebook.com/test.user", "ok"),
             FetchResult(
                 200,
                 (
@@ -527,8 +526,9 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertTrue(first_payload["ok"])
         self.assertTrue(second_payload["ok"])
         self.assertEqual(second_payload["content"], "First cookie latest post content")
-        sixth_call_headers = fetch_text.call_args_list[5].args[1]
-        self.assertIn("c_user=100000000000077", sixth_call_headers["Cookie"])
+        self.assertEqual(fetch_text.call_count, 5)
+        fifth_call_headers = fetch_text.call_args_list[4].args[1]
+        self.assertIn("c_user=100000000000077", fifth_call_headers["Cookie"])
 
     @patch.dict(
         "os.environ",

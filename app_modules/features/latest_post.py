@@ -231,6 +231,8 @@ def get_latest_post_direct_from_input(
     attempts: list[dict[str, Any]] = []
     best_failure: dict[str, Any] | None = None
     timeout = _request_timeout()
+    max_attempts = _max_direct_probe_attempts()
+    attempt_count = 0
 
     expected_owner_uid = normalize_uid(owner_uid)
     direct_uid = expected_owner_uid or extract_direct_uid_from_facebook_url(cleaned_input)
@@ -249,14 +251,19 @@ def get_latest_post_direct_from_input(
         move_to_next_candidate = False
         for url in probe_urls:
             for header_label, headers in _headers_for_candidate(candidate):
+                attempt_count += 1
                 fetch = _fetch_text(url, headers, timeout)
+                route_expanded = False
                 discovered_uid = extract_direct_uid_from_facebook_url(fetch.final_url)
                 if discovered_uid:
                     if not direct_uid:
+                        route_expanded = True
                         direct_uid = discovered_uid
                     _prepend_direct_uid_probe_urls(probe_urls, discovered_uid)
                 discovered_username = extract_profile_username_from_url(fetch.final_url)
                 if discovered_username:
+                    if not direct_username or discovered_username.lower() != direct_username.lower():
+                        route_expanded = True
                     if not direct_username:
                         direct_username = discovered_username
                     _append_direct_username_probe_urls(probe_urls, discovered_username)
@@ -273,6 +280,9 @@ def get_latest_post_direct_from_input(
                         attempt["reason"] = f"latest_post_no_cookie_untrusted_http_{fetch.http_code or 0}"
                         attempts.append(attempt)
                         best_failure = choose_better_latest_post_result(best_failure, attempt)
+                        if attempt_count >= max_attempts:
+                            stop_all_candidates = True
+                            break
                         continue
 
                     post_link = extract_facebook_post_url_from_html(fetch.text) or build_direct_latest_post_link(
@@ -314,11 +324,25 @@ def get_latest_post_direct_from_input(
                 attempt["reason"] = fail_reason
                 attempts.append(attempt)
                 best_failure = choose_better_latest_post_result(best_failure, attempt)
+                if attempt_count >= max_attempts:
+                    stop_all_candidates = True
+                    break
                 if not candidate.has_cookie and _is_direct_no_cookie_terminal_reason(fail_reason):
                     attempt["fastFallbackToCookie"] = True
                     move_to_next_candidate = True
                     break
+                if (
+                    candidate.has_cookie
+                    and _is_direct_cookie_terminal_reason(fail_reason)
+                    and not route_expanded
+                    and not (direct_uid and direct_username)
+                ):
+                    attempt["fastFallbackToNextCookie"] = True
+                    move_to_next_candidate = True
+                    break
             if move_to_next_candidate:
+                break
+            if stop_all_candidates:
                 break
         if stop_all_candidates:
             break
@@ -517,6 +541,16 @@ def _is_direct_no_cookie_terminal_reason(reason_raw: Any) -> bool:
         or reason.startswith("latest_post_no_cookie_untrusted")
         or reason.startswith("latest_post_candidate_untrusted")
         or reason.startswith("timeline_shell_no_post_data")
+        or reason.startswith("unsupported_browser_interstitial")
+    )
+
+
+def _is_direct_cookie_terminal_reason(reason_raw: Any) -> bool:
+    reason = str(reason_raw or "")
+    return (
+        reason == "auth_wall"
+        or reason == "checkpoint_detected"
+        or reason == "profile_unavailable"
         or reason.startswith("unsupported_browser_interstitial")
     )
 
@@ -1417,6 +1451,13 @@ def _max_probe_attempts() -> int:
         return max(3, int(os.getenv("LATEST_POST_MAX_PROBE_ATTEMPTS", "6")))
     except ValueError:
         return 6
+
+
+def _max_direct_probe_attempts() -> int:
+    try:
+        return max(2, int(os.getenv("LATEST_POST_DIRECT_MAX_PROBE_ATTEMPTS", "5")))
+    except ValueError:
+        return 5
 
 
 def _max_response_bytes() -> int:
