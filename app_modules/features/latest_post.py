@@ -1098,7 +1098,7 @@ def _read_response_text_limited(response: requests.Response) -> str:
     chunks: list[bytes] = []
     total = 0
     next_check_at = _stream_check_interval_bytes()
-    encoding = response.encoding or "utf-8"
+    encoding = _response_text_encoding(response)
     started = perf_counter()
     fetch_deadline = _stream_fetch_deadline_seconds()
 
@@ -1128,6 +1128,13 @@ def _read_response_text_limited(response: requests.Response) -> str:
             break
 
     return b"".join(chunks).decode(encoding, errors="ignore")
+
+
+def _response_text_encoding(response: requests.Response) -> str:
+    encoding = str(response.encoding or "").strip().lower()
+    if not encoding or encoding in {"iso-8859-1", "latin-1"}:
+        return "utf-8"
+    return encoding
 
 
 def _has_enough_latest_post_payload_for_stream_stop(text: str, total_bytes: int) -> bool:
