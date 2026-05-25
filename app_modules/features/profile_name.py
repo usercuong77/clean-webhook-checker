@@ -347,7 +347,9 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
             probes=probes,
             forced=force_cookie,
         )
-        if retry.name or retry.verified_label or retry.used_cookie:
+        if retry.name or retry.verified_label:
+            return retry
+        if retry.used_cookie and public_name_result is None:
             return retry
     if force_cookie:
         if public_name_result:

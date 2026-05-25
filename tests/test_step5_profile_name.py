@@ -618,6 +618,34 @@ class Step5ProfileNameTests(unittest.TestCase):
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_profile_uid_keeps_public_name_when_cookie_empty(
+        self,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        profile_url = "https://www.facebook.com/profile.php?id=61561467565550"
+        load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [(profile_url, {}, "facebookcatalog")]
+        cookie_candidates.return_value = [(profile_url, {}, "cookie")]
+        fetch_limited.side_effect = [
+            _fetch_result(200, '<meta property="og:title" content="Do Phung">', profile_url, "ok"),
+            _fetch_result(200, "<title>Facebook</title>", profile_url, "ok"),
+        ]
+
+        result = check_tick_input(CheckRequest(input=profile_url, mode="1", includeName=True))
+
+        self.assertEqual(result["status"], "LIVE")
+        self.assertEqual(result["name"], "Do Phung")
+        self.assertFalse(result["verified"])
+        self.assertFalse(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "no_cookie")
+
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
     def test_checktick_force_cookie_retries_login_next_target(
         self,
         fetch_limited,
