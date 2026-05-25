@@ -169,6 +169,8 @@ def get_latest_post(
                 http_success = 200 <= fetch.http_code < 400
 
                 attempt = _attempt_record(url, fetch, candidate, header_label)
+                if has_post:
+                    attempt["candidatePostId"] = parsed["postId"]
                 if has_post and has_evidence and http_success:
                     ownership = analyze_latest_post_ownership(fetch.text, parsed["postId"], uid)
                     content = extract_latest_post_content_from_html(fetch.text, parsed["postId"])
@@ -272,6 +274,8 @@ def get_latest_post_direct_from_input(
                 has_evidence = bool(has_post and has_latest_post_evidence_in_html(fetch.text, parsed.get("postId")))
                 http_success = 200 <= fetch.http_code < 400
                 attempt = _attempt_record(url, fetch, candidate, header_label)
+                if has_post:
+                    attempt["candidatePostId"] = parsed["postId"]
 
                 if has_post and has_evidence and http_success:
                     ownership = analyze_latest_post_ownership(fetch.text, parsed["postId"], expected_owner_uid)
@@ -1332,6 +1336,7 @@ def _failure_from_attempt(
     fallback_reason: str,
 ) -> dict[str, Any]:
     best = best_failure or {}
+    reason = _final_latest_post_failure_reason(attempts, best, fallback_reason)
     return {
         "ok": False,
         "uid": uid,
@@ -1341,13 +1346,54 @@ def _failure_from_attempt(
         "content": "",
         "postContent": "",
         "method": str(best.get("method") or "no_cookie"),
-        "reason": str(best.get("reason") or fallback_reason),
+        "reason": reason,
         "httpCode": int(best.get("httpCode") or 0),
         "probeUrl": str(best.get("url") or ""),
         "finalUrl": str(best.get("finalUrl") or ""),
         "cookieFallbackUsed": any(str(item.get("method")) == "with_cookie" for item in attempts),
         "probeAttempts": attempts,
     }
+
+
+def _final_latest_post_failure_reason(
+    attempts: list[dict[str, Any]],
+    best_failure: dict[str, Any],
+    fallback_reason: str,
+) -> str:
+    if _attempts_confirm_no_posts_found(attempts):
+        return "no_posts_found"
+    return str(best_failure.get("reason") or fallback_reason)
+
+
+def _attempts_confirm_no_posts_found(attempts: list[dict[str, Any]]) -> bool:
+    if not attempts:
+        return False
+    methods = {str(item.get("method") or "") for item in attempts if isinstance(item, dict)}
+    if "no_cookie" not in methods or "with_cookie" not in methods:
+        return False
+    if any(str(item.get("candidatePostId") or item.get("postId") or "").strip() for item in attempts):
+        return False
+    reasons = [str(item.get("reason") or "").lower() for item in attempts if isinstance(item, dict)]
+    if not reasons:
+        return False
+    if any(_is_blocked_latest_post_reason(reason) for reason in reasons):
+        return False
+    return any(_is_no_posts_latest_post_reason(reason) for reason in reasons)
+
+
+def _is_no_posts_latest_post_reason(reason: str) -> bool:
+    return reason.startswith("timeline_shell_no_post_data") or reason == "latest_post_not_found_http_200"
+
+
+def _is_blocked_latest_post_reason(reason: str) -> bool:
+    return (
+        reason.startswith("checkpoint")
+        or reason.startswith("auth_wall")
+        or reason.startswith("profile_unavailable")
+        or reason.startswith("unsupported_browser_interstitial")
+        or reason.startswith("facebook_error_page")
+        or reason.startswith("request_error")
+    )
 
 
 def _empty_result(uid: str, method: str, reason: str, http_code: int) -> dict[str, Any]:

@@ -530,6 +530,48 @@ class Step6LatestPostTests(unittest.TestCase):
         fifth_call_headers = fetch_text.call_args_list[4].args[1]
         self.assertIn("c_user=100000000000077", fifth_call_headers["Cookie"])
 
+    @patch.dict("os.environ", {"LATEST_POST_DIRECT_MAX_PROBE_ATTEMPTS": "2"})
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_direct_reports_no_posts_only_after_no_cookie_and_cookie_no_post_id(
+        self,
+        fetch_text,
+        load_cookie_accounts,
+    ):
+        load_cookie_accounts.return_value = [_cookie_account()]
+        shell_without_post = "window.weblitebootloader appautostartdisabled"
+        fetch_text.side_effect = [
+            FetchResult(200, shell_without_post, "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, shell_without_post, "https://www.facebook.com/test.user?sk=posts", "ok"),
+        ]
+
+        payload = get_latest_post_direct_from_input("https://www.facebook.com/test.user")
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["postId"], "")
+        self.assertEqual(payload["reason"], "no_posts_found")
+        self.assertEqual(fetch_text.call_count, 2)
+
+    @patch.dict("os.environ", {"LATEST_POST_DIRECT_MAX_PROBE_ATTEMPTS": "2"})
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_direct_does_not_report_no_posts_for_checkpoint(
+        self,
+        fetch_text,
+        load_cookie_accounts,
+    ):
+        load_cookie_accounts.return_value = [_cookie_account()]
+        fetch_text.side_effect = [
+            FetchResult(200, "checkpoint", "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, "checkpoint", "https://www.facebook.com/test.user?sk=posts", "ok"),
+        ]
+
+        payload = get_latest_post_direct_from_input("https://www.facebook.com/test.user")
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["postId"], "")
+        self.assertEqual(payload["reason"], "checkpoint_detected")
+
     @patch.dict(
         "os.environ",
         {
