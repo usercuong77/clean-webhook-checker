@@ -1010,6 +1010,7 @@ def clean_facebook_post_content(value_raw: Any) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    text = repair_facebook_mojibake_text(text)
     if not text:
         return ""
 
@@ -1024,6 +1025,26 @@ def clean_facebook_post_content(value_raw: Any) -> str:
     if len(text) < 180 and any(lowered.startswith(item) for item in generic_prefixes):
         return ""
     return text
+
+
+def repair_facebook_mojibake_text(value_raw: Any) -> str:
+    text = str(value_raw or "")
+    if not text or _mojibake_score(text) <= 0:
+        return text
+
+    try:
+        repaired = text.encode("latin-1").decode("utf-8")
+    except UnicodeError:
+        return text
+
+    if _mojibake_score(repaired) < _mojibake_score(text):
+        return repaired
+    return text
+
+
+def _mojibake_score(text: str) -> int:
+    markers = ("Ã", "Â", "Ä", "Å", "Æ", "â€", "â€™", "â€œ", "â€", "áº", "á»", "Ä‘", "Æ°", "Æ¡")
+    return sum(text.count(marker) for marker in markers)
 
 
 def extract_meta_content_from_html(html_raw: Any, attr_name: str, attr_value: str) -> str:

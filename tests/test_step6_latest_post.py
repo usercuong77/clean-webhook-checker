@@ -159,6 +159,11 @@ class Step6LatestPostTests(unittest.TestCase):
     def test_clean_post_content_rejects_login_wall_text(self):
         self.assertEqual(clean_facebook_post_content("Log in or sign up to view"), "")
 
+    def test_clean_post_content_repairs_facebook_mojibake_text(self):
+        mojibake = "T\u00e1\u00ba\u00a1i c\u00c3\u00a1c x\u00c3\u00a3 mi\u00e1\u00bb\u0081n n\u00c3\u00bai"
+
+        self.assertEqual(clean_facebook_post_content(mojibake), "T\u1ea1i c\u00e1c x\u00e3 mi\u1ec1n n\u00fai")
+
     def test_analyze_latest_post_ownership_detects_tagged_actor(self):
         html = (
             '<meta property="al:android:url" content="fb://profile/100005122057274">'
