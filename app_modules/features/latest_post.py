@@ -500,6 +500,8 @@ def _is_direct_no_cookie_terminal_reason(reason_raw: Any) -> bool:
         reason == "auth_wall"
         or reason == "checkpoint_detected"
         or reason == "profile_unavailable"
+        or reason.startswith("latest_post_no_cookie_untrusted")
+        or reason.startswith("latest_post_candidate_untrusted")
         or reason.startswith("timeline_shell_no_post_data")
         or reason.startswith("unsupported_browser_interstitial")
     )
