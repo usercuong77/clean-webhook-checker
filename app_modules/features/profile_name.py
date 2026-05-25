@@ -407,7 +407,7 @@ def _normalize_profile_tick_input(raw_input: str) -> str:
 
 def _should_cookie_confirm_public_name_only(normalized: str) -> bool:
     value = str(normalized or "").lower()
-    return "/share/" in value or "profile.php" in value
+    return "/share/" in value
 
 
 def _profile_tick_username_from_url(url: str) -> str:
