@@ -281,7 +281,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         if public.verified_label:
             return public
         if public.name:
-            if _should_cookie_confirm_public_name_only(normalized):
+            if _should_confirm_public_name_only_result(normalized, public):
                 public_name_result = public
                 for _ in range(_share_name_only_no_cookie_retry_count()):
                     retry_public = _resolve_profile_tick_no_cookie(
@@ -325,7 +325,7 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
             return public
         if public.name:
             public_name_result = public
-            if _should_cookie_confirm_public_name_only(normalized):
+            if _should_confirm_public_name_only_result(normalized, public):
                 for _ in range(_share_name_only_no_cookie_retry_count()):
                     retry_public = _resolve_profile_tick_no_cookie(
                         normalized=normalized,
@@ -436,6 +436,11 @@ def _normalize_profile_tick_input(raw_input: str) -> str:
 def _should_cookie_confirm_public_name_only(normalized: str) -> bool:
     value = str(normalized or "").lower()
     return "/share/" in value
+
+
+def _should_confirm_public_name_only_result(normalized: str, result: ProfileTickResult) -> bool:
+    reason = str(result.reason or "").lower()
+    return _should_cookie_confirm_public_name_only(normalized) or "login_next_name_found" in reason
 
 
 def _share_name_only_no_cookie_retry_count() -> int:
@@ -701,10 +706,15 @@ def _public_tick_probe_candidates(normalized: str, uid: str, username: str) -> l
     out: list[tuple[str, dict[str, str], str]] = []
     seen: set[str] = set()
     for url in urls:
-        for label, headers in (
-            ("facebookcatalog", _facebook_catalog_headers()),
-            ("facebookexternalhit", _facebook_externalhit_headers()),
-        ):
+        header_candidates: tuple[tuple[str, dict[str, str]], ...]
+        if _is_mobile_profile_tick_url(url):
+            header_candidates = (("facebookexternalhit", _facebook_externalhit_headers()),)
+        else:
+            header_candidates = (
+                ("facebookcatalog", _facebook_catalog_headers()),
+                ("facebookexternalhit", _facebook_externalhit_headers()),
+            )
+        for label, headers in header_candidates:
             key = f"{label}|{url}"
             if key in seen:
                 continue
@@ -732,6 +742,11 @@ def _public_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
             ]
         )
     return _unique(urls)
+
+
+def _is_mobile_profile_tick_url(url: str) -> bool:
+    host = urlparse(str(url or "")).netloc.lower()
+    return host.startswith("m.facebook.com") or host.startswith("mbasic.facebook.com")
 
 
 def _deep_cookie_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
