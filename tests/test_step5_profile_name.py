@@ -600,6 +600,7 @@ class Step5ProfileNameTests(unittest.TestCase):
         cookie_candidates.return_value = [(target, {}, "cookie")]
         fetch_limited.side_effect = [
             _fetch_result(200, '<meta property="og:title" content="VTV24">', target, "ok"),
+            _fetch_result(200, '<meta property="og:title" content="VTV24">', target, "ok"),
             _fetch_result(200, '<meta property="og:title" content="VTV24 Verified account">', target, "ok"),
         ]
 
@@ -612,7 +613,39 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertTrue(result["verified"])
         self.assertTrue(result["usedCookie"])
         self.assertEqual(result["checkTickMode"], "cookie")
+        self.assertEqual(fetch_limited.call_count, 3)
+
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    def test_checktick_share_name_only_retries_no_cookie_before_cookie(
+        self,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        target = "https://www.facebook.com/tintucvtv24"
+        load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [("https://www.facebook.com/share/17Q7NRNi2T/", {}, "facebookcatalog")]
+        cookie_candidates.return_value = [(target, {}, "cookie")]
+        fetch_limited.side_effect = [
+            _fetch_result(200, '<meta property="og:title" content="VTV24">', target, "ok"),
+            _fetch_result(200, '<meta property="og:title" content="VTV24 Verified account">', target, "ok"),
+        ]
+
+        result = check_tick_input(
+            CheckRequest(input="https://www.facebook.com/share/17Q7NRNi2T/", mode="1", includeName=True)
+        )
+
+        self.assertEqual(result["status"], "LIVE")
+        self.assertEqual(result["name"], "VTV24")
+        self.assertTrue(result["verified"])
+        self.assertFalse(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "no_cookie")
         self.assertEqual(fetch_limited.call_count, 2)
+        cookie_candidates.assert_not_called()
 
     @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
     @patch("app_modules.features.profile_name._public_tick_probe_candidates")

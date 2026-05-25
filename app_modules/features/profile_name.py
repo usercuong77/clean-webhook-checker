@@ -282,6 +282,19 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
         if public.name:
             if _should_cookie_confirm_public_name_only(normalized):
                 public_name_result = public
+                for _ in range(_share_name_only_no_cookie_retry_count()):
+                    retry_public = _resolve_profile_tick_no_cookie(
+                        normalized=normalized,
+                        uid=uid,
+                        username=username,
+                        canonical_url=canonical_url,
+                        timeout=timeout,
+                        probes=probes,
+                    )
+                    if retry_public.verified_label:
+                        return retry_public
+                    if retry_public.name:
+                        public_name_result = retry_public
                 normalized = public.canonical_url or normalized
                 uid = public.uid or uid
                 username = public.username or username
@@ -408,6 +421,14 @@ def _normalize_profile_tick_input(raw_input: str) -> str:
 def _should_cookie_confirm_public_name_only(normalized: str) -> bool:
     value = str(normalized or "").lower()
     return "/share/" in value
+
+
+def _share_name_only_no_cookie_retry_count() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_SHARE_NAME_RETRY_COUNT", "1"))
+    except ValueError:
+        configured = 1
+    return max(0, min(configured, 2))
 
 
 def _profile_tick_username_from_url(url: str) -> str:
