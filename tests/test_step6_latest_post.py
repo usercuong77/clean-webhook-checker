@@ -176,6 +176,9 @@ class Step6LatestPostTests(unittest.TestCase):
             clean_facebook_post_content("\u0110\u1ed7 Ph\u00f9ng \u0111ang \u1edf tr\u00ean Facebook. Tham gia Facebook \u0111\u1ec3 k\u1ebft n\u1ed1i"),
             "",
         )
+        self.assertEqual(clean_facebook_post_content("7 \u0111ang theo d\u00f5i"), "")
+        self.assertEqual(clean_facebook_post_content("39 \u0111ang theo d\u00f5i"), "")
+        self.assertEqual(clean_facebook_post_content("VTV24 thu\u1ed9c Ban Th\u1eddi s\u1ef1, \u0110\u00e0i Truy\u1ec1n h\u00ecnh Vi\u1ec7t Nam"), "")
 
     def test_analyze_latest_post_ownership_detects_tagged_actor(self):
         html = (

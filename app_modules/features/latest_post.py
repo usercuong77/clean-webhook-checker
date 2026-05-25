@@ -89,6 +89,8 @@ GENERIC_POST_CONTENT_FRAGMENTS = (
     "trên mạng xã hội",
     "đang ở trên facebook",
     "tham gia facebook để kết nối",
+    "thuộc ban thời sự",
+    "đài truyền hình việt nam",
 )
 
 INVISIBLE_INPUT_CHARS_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFE0E\uFE0F]")
@@ -762,7 +764,7 @@ def is_facebook_social_context_content(content_raw: Any) -> bool:
         r"\bvới\s+.{1,120}\s+và\s+\d+\s+người khác\b",
         r"\bđã phát trực tiếp\b",
         r"\bđang phát trực tiếp\b",
-        r"\bphát trực tiếp\s+—\s+với\b",
+        r"\bphát trực tiếp\s+[—-]\s+với\b",
         r"\bis with\b",
         r"\bwas with\b",
         r"\bwith\s+.{1,120}\s+and\s+\d+\s+others\b",
@@ -1047,6 +1049,8 @@ def is_profile_metadata_content(value_raw: Any) -> bool:
     if any(fragment in lowered for fragment in GENERIC_POST_CONTENT_FRAGMENTS):
         return True
     if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:k|m|triệu|nghìn)?\s+người theo dõi\b", lowered):
+        return True
+    if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:k|m|triệu|nghìn)?\s+đang theo dõi\b", lowered):
         return True
     if re.search(r"\b\d+(?:[.,]\d+)?\s*(?:k|m)?\s+followers\b", lowered):
         return True
