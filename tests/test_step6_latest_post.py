@@ -381,13 +381,13 @@ class Step6LatestPostTests(unittest.TestCase):
             ),
             FetchResult(
                 200,
-                "checkpoint",
+                "checkpoint challenge",
                 "https://www.facebook.com/thanh.duyen.37570/",
                 "ok",
             ),
             FetchResult(
                 200,
-                "checkpoint",
+                "checkpoint challenge",
                 "https://www.facebook.com/thanh.duyen.37570/",
                 "ok",
             ),
@@ -421,7 +421,7 @@ class Step6LatestPostTests(unittest.TestCase):
         fetch_text.side_effect = [
             FetchResult(
                 200,
-                "checkpoint",
+                "checkpoint challenge",
                 "https://www.facebook.com/profile.php?id=100003717317472&rdid=abc&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1Ktp9U1VMF%2F",
                 "ok",
             ),
@@ -496,7 +496,7 @@ class Step6LatestPostTests(unittest.TestCase):
         ]
         fetch_text.side_effect = [
             FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/test.user?sk=posts", "ok"),
-            FetchResult(200, "checkpoint", "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, "checkpoint challenge", "https://www.facebook.com/test.user?sk=posts", "ok"),
             FetchResult(
                 200,
                 (
@@ -562,8 +562,8 @@ class Step6LatestPostTests(unittest.TestCase):
     ):
         load_cookie_accounts.return_value = [_cookie_account()]
         fetch_text.side_effect = [
-            FetchResult(200, "checkpoint", "https://www.facebook.com/test.user?sk=posts", "ok"),
-            FetchResult(200, "checkpoint", "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, "checkpoint challenge", "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, "checkpoint challenge", "https://www.facebook.com/test.user?sk=posts", "ok"),
         ]
 
         payload = get_latest_post_direct_from_input("https://www.facebook.com/test.user")
@@ -653,6 +653,60 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(fetch.http_code, 200)
         self.assertIn("checkpoint", fetch.text)
         self.assertNotIn("tail-that-should-not-be-read", fetch.text)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "LATEST_POST_STREAM_CHECK_INTERVAL_BYTES": "65536",
+            "LATEST_POST_STREAM_STOP_AFTER_POST_BYTES": "131072",
+            "LATEST_POST_MAX_RESPONSE_BYTES": "300000",
+        },
+    )
+    @patch("app_modules.features.latest_post.requests.get")
+    def test_fetch_text_does_not_stop_on_checkpoint_route_map(self, get):
+        post_id = "123456789012345"
+        get.return_value = _stream_response(
+            [
+                b'"/checkpoint/block/":1,' + (b"x" * 70000),
+                (
+                    f'"post_id":"{post_id}"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Real post after checkpoint route map"}'
+                ).encode("utf-8"),
+            ],
+        )
+
+        fetch = _fetch_text("https://www.facebook.com/test.user?sk=posts", {"User-Agent": "test"}, 7)
+
+        self.assertEqual(fetch.http_code, 200)
+        self.assertIn("Real post after checkpoint route map", fetch.text)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "LATEST_POST_STREAM_CHECK_INTERVAL_BYTES": "65536",
+            "LATEST_POST_STREAM_STOP_AFTER_POST_BYTES": "131072",
+            "LATEST_POST_MAX_RESPONSE_BYTES": "300000",
+        },
+    )
+    @patch("app_modules.features.latest_post.requests.get")
+    def test_fetch_text_does_not_stop_on_unavailable_template_phrase(self, get):
+        post_id = "123456789012345"
+        get.return_value = _stream_response(
+            [
+                b"This content isn't available right now in a reusable template. " + (b"x" * 70000),
+                (
+                    f'"post_id":"{post_id}"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Real post after template phrase"}'
+                ).encode("utf-8"),
+            ],
+        )
+
+        fetch = _fetch_text("https://www.facebook.com/test.user?sk=posts", {"User-Agent": "test"}, 7)
+
+        self.assertEqual(fetch.http_code, 200)
+        self.assertIn("Real post after template phrase", fetch.text)
 
 
 def _resolved(uid="", username="", resolver_name=""):

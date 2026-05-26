@@ -542,6 +542,7 @@ def _is_direct_no_cookie_terminal_reason(reason_raw: Any) -> bool:
         reason == "auth_wall"
         or reason == "checkpoint_detected"
         or reason == "profile_unavailable"
+        or reason.startswith("latest_post_not_found")
         or reason.startswith("latest_post_no_cookie_untrusted")
         or reason.startswith("latest_post_candidate_untrusted")
         or reason.startswith("timeline_shell_no_post_data")
@@ -852,7 +853,7 @@ def build_latest_post_failure_reason(body_raw: Any, final_url_raw: Any, http_cod
     final_url = str(final_url_raw or "")
     http_code = int(http_code_raw or 0)
 
-    if "checkpoint" in body_low or "/checkpoint/" in final_url.lower():
+    if _contains_checkpoint_challenge(body_low) or "/checkpoint/" in final_url.lower():
         return "checkpoint_detected"
     if _is_auth_wall(body_low, final_url):
         return "auth_wall"
@@ -1285,7 +1286,7 @@ def _is_fast_terminal_latest_post_final_url(url_raw: Any) -> bool:
 def _has_fast_terminal_latest_post_body(text_raw: Any) -> bool:
     text = str(text_raw or "").lower()
     return (
-        "checkpoint" in text
+        _contains_checkpoint_challenge(text)
         or "login_form" in text
         or "log in or sign up" in text
         or "you must log in" in text
@@ -1294,10 +1295,18 @@ def _has_fast_terminal_latest_post_body(text_raw: Any) -> bool:
         or "this browser isn't supported" in text
         or "this browser is not supported" in text
         or "weblite_unsupported" in text
-        or "content isn't available" in text
-        or "this content isn't available" in text
-        or "page isn't available" in text
-        or "this page isn't available" in text
+    )
+
+
+def _contains_checkpoint_challenge(body_low: str) -> bool:
+    return (
+        "checkpoint challenge" in body_low
+        or "checkpoint required" in body_low
+        or "checkpoint_form" in body_low
+        or "checkpoint_url" in body_low
+        or 'action="/checkpoint' in body_low
+        or "checkpoint/?next" in body_low
+        or "/checkpoint/?next" in body_low
     )
 
 
