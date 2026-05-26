@@ -82,7 +82,7 @@ def health_payload() -> dict[str, Any]:
         "ok": True,
         "service": config.app_name,
         "version": config.version,
-        "codeVersion": "step116-checkpost-canonical-share-fallback",
+        "codeVersion": "step116b-checkpost-base-canonical-fallback",
     }
 
 
