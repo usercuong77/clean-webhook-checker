@@ -336,6 +336,11 @@ def get_latest_post_direct_from_input(
                 if attempt_count >= max_attempts:
                     stop_all_candidates = True
                     break
+                stop_reason = _direct_cookie_negative_stop_reason(candidate, attempts, fail_reason)
+                if stop_reason:
+                    attempt["fastStopNegative"] = stop_reason
+                    stop_all_candidates = True
+                    break
                 if not candidate.has_cookie and _is_direct_no_cookie_terminal_reason(fail_reason):
                     attempt["fastFallbackToCookie"] = True
                     move_to_next_candidate = True
@@ -599,6 +604,21 @@ def _is_direct_cookie_terminal_reason(reason_raw: Any) -> bool:
         or reason.startswith("latest_post_not_found")
         or reason.startswith("unsupported_browser_interstitial")
     )
+
+
+def _direct_cookie_negative_stop_reason(
+    candidate: CookieCandidate,
+    attempts: list[dict[str, Any]],
+    reason_raw: Any,
+) -> str:
+    if not candidate.has_cookie:
+        return ""
+    reason = str(reason_raw or "").lower()
+    if _attempts_confirm_no_posts_found(attempts):
+        return "confirmed_no_posts_after_cookie"
+    if reason.startswith("profile_unavailable"):
+        return "profile_unavailable_after_cookie"
+    return ""
 
 
 def _with_query_param(url: str, query: str) -> str:

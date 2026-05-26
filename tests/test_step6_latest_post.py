@@ -592,6 +592,73 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "no_posts_found")
         self.assertEqual(fetch_text.call_count, 2)
 
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_direct_stops_after_first_cookie_when_no_posts_confirmed(
+        self,
+        fetch_text,
+        load_cookie_accounts,
+    ):
+        load_cookie_accounts.return_value = [
+            _cookie_account("100000000000077"),
+            _cookie_account("100000000000088"),
+        ]
+        shell_without_post = "window.weblitebootloader appautostartdisabled"
+        fetch_text.side_effect = [
+            FetchResult(200, shell_without_post, "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(200, shell_without_post, "https://www.facebook.com/test.user?sk=posts", "ok"),
+            FetchResult(
+                200,
+                (
+                    '"post_id":"123456789012345"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Should not call second cookie"}'
+                ),
+                "https://www.facebook.com/test.user?sk=posts",
+                "ok",
+            ),
+        ]
+
+        payload = get_latest_post_direct_from_input("https://www.facebook.com/test.user")
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["reason"], "no_posts_found")
+        self.assertEqual(fetch_text.call_count, 2)
+        self.assertEqual(payload["probeAttempts"][-1]["fastStopNegative"], "confirmed_no_posts_after_cookie")
+
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_direct_stops_after_cookie_profile_unavailable(
+        self,
+        fetch_text,
+        load_cookie_accounts,
+    ):
+        load_cookie_accounts.return_value = [
+            _cookie_account("100000000000077"),
+            _cookie_account("100000000000088"),
+        ]
+        fetch_text.side_effect = [
+            FetchResult(200, "Log in or sign up to view", "https://www.facebook.com/dead.user?sk=posts", "ok"),
+            FetchResult(200, "This content isn't available right now", "https://www.facebook.com/dead.user?sk=posts", "ok"),
+            FetchResult(
+                200,
+                (
+                    '"post_id":"123456789012345"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Should not call second cookie"}'
+                ),
+                "https://www.facebook.com/dead.user?sk=posts",
+                "ok",
+            ),
+        ]
+
+        payload = get_latest_post_direct_from_input("https://www.facebook.com/dead.user")
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["reason"], "profile_unavailable")
+        self.assertEqual(fetch_text.call_count, 2)
+        self.assertEqual(payload["probeAttempts"][-1]["fastStopNegative"], "profile_unavailable_after_cookie")
+
     @patch.dict("os.environ", {"LATEST_POST_DIRECT_MAX_PROBE_ATTEMPTS": "2"})
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
