@@ -95,6 +95,12 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(urls[0], "https://www.facebook.com/profile.php?id=100003717317472")
         self.assertEqual(urls[1], "https://www.facebook.com/profile.php?id=100003717317472&sk=posts")
 
+    def test_build_direct_latest_post_urls_prefer_raw_uid_base_before_posts_tab(self):
+        urls = build_direct_latest_post_probe_urls("100003717317472")
+
+        self.assertEqual(urls[0], "https://www.facebook.com/profile.php?id=100003717317472")
+        self.assertEqual(urls[1], "https://www.facebook.com/profile.php?id=100003717317472&sk=posts")
+
     def test_parse_latest_post_pair(self):
         html = '"post_id":"123456789012345" abc "publish_time":1760000000'
 
@@ -465,7 +471,7 @@ class Step6LatestPostTests(unittest.TestCase):
                     '"publish_time":1760000000'
                     '"message":{"text":"Username route latest post"}'
                 ),
-                "https://www.facebook.com/thanh.duyen.37570?sk=posts",
+                "https://www.facebook.com/thanh.duyen.37570",
                 "ok",
             ),
         ]
@@ -477,7 +483,7 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertEqual(payload["method"], "direct_with_cookie")
         self.assertEqual(payload["content"], "Username route latest post")
         called_urls = [call.args[0] for call in fetch_text.call_args_list]
-        self.assertEqual(called_urls[1], "https://www.facebook.com/thanh.duyen.37570?sk=posts")
+        self.assertEqual(called_urls[1], "https://www.facebook.com/thanh.duyen.37570")
 
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")

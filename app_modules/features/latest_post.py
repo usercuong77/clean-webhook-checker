@@ -381,7 +381,9 @@ def _prepend_direct_username_probe_urls(probe_urls: list[str], username: str) ->
     clean_username = str(username or "").strip().strip("/")
     if not clean_username:
         return
-    additions = build_direct_latest_post_probe_urls(f"https://www.facebook.com/{clean_username}")
+    additions = _prefer_base_url_before_posts_tab(
+        build_direct_latest_post_probe_urls(f"https://www.facebook.com/{clean_username}")
+    )
     seen = {str(url or "").strip().lower() for url in probe_urls}
     to_add: list[str] = []
     for url in additions:
@@ -425,7 +427,11 @@ def build_direct_latest_post_probe_urls(input_raw: Any) -> list[str]:
 
     uid = normalize_uid(value)
     if uid:
-        return [f"https://www.facebook.com/profile.php?id={quote(uid, safe='')}&sk=posts"]
+        safe_uid = quote(uid, safe="")
+        return [
+            f"https://www.facebook.com/profile.php?id={safe_uid}",
+            f"https://www.facebook.com/profile.php?id={safe_uid}&sk=posts",
+        ]
 
     parsed = urlsplit(value)
     host = parsed.netloc.lower()
@@ -453,6 +459,19 @@ def build_direct_latest_post_probe_urls(input_raw: Any) -> list[str]:
     original = urlunsplit((parsed.scheme or "https", parsed.netloc or "www.facebook.com", path, parsed.query, ""))
     urls.append(original)
     return _unique(urls)
+
+
+def _prefer_base_url_before_posts_tab(urls: list[str]) -> list[str]:
+    base_urls: list[str] = []
+    posts_tab_urls: list[str] = []
+    for url in urls:
+        parsed = urlsplit(url)
+        query = parse_qs(parsed.query)
+        if any(str(value).lower() == "posts" for value in query.get("sk", [])):
+            posts_tab_urls.append(url)
+        else:
+            base_urls.append(url)
+    return base_urls + posts_tab_urls
 
 
 def extract_direct_uid_from_facebook_url(input_raw: Any) -> str:
