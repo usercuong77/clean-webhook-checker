@@ -239,6 +239,7 @@ def get_latest_post_direct_from_input(
     expected_owner_uid = normalize_uid(owner_uid)
     direct_uid = expected_owner_uid or extract_direct_uid_from_facebook_url(cleaned_input)
     direct_username = extract_profile_username_from_url(cleaned_input)
+    allow_single_cookie_negative_stop = _allows_single_cookie_negative_stop(cleaned_input)
     cookie_candidates = [
         candidate for candidate in build_cookie_candidates(request_cookies, request_cookie_pool) if candidate.has_cookie
     ]
@@ -336,7 +337,12 @@ def get_latest_post_direct_from_input(
                 if attempt_count >= max_attempts:
                     stop_all_candidates = True
                     break
-                stop_reason = _direct_cookie_negative_stop_reason(candidate, attempts, fail_reason)
+                stop_reason = _direct_cookie_negative_stop_reason(
+                    candidate,
+                    attempts,
+                    fail_reason,
+                    allow_single_cookie_negative_stop,
+                )
                 if stop_reason:
                     attempt["fastStopNegative"] = stop_reason
                     stop_all_candidates = True
@@ -610,6 +616,7 @@ def _direct_cookie_negative_stop_reason(
     candidate: CookieCandidate,
     attempts: list[dict[str, Any]],
     reason_raw: Any,
+    allow_single_cookie_stop: bool = False,
 ) -> str:
     if not candidate.has_cookie:
         return ""
@@ -618,7 +625,52 @@ def _direct_cookie_negative_stop_reason(
         return "confirmed_no_posts_after_cookie"
     if reason.startswith("profile_unavailable"):
         return "profile_unavailable_after_cookie"
+    if allow_single_cookie_stop and _attempts_have_cookie_no_post_after_no_cookie_terminal(attempts):
+        return "cookie_no_post_after_no_cookie_terminal"
     return ""
+
+
+def _allows_single_cookie_negative_stop(input_raw: Any) -> bool:
+    value = sanitize_latest_post_input(input_raw)
+    parsed = urlsplit(value)
+    if "facebook.com" not in parsed.netloc.lower():
+        return False
+    first_segment = parsed.path.strip("/").split("/", 1)[0].strip().lower()
+    if first_segment in {
+        "share",
+        "story.php",
+        "permalink.php",
+        "photo.php",
+        "watch",
+        "groups",
+        "pages",
+    }:
+        return False
+    return True
+
+
+def _attempts_have_cookie_no_post_after_no_cookie_terminal(attempts: list[dict[str, Any]]) -> bool:
+    if not attempts:
+        return False
+    if any(str(item.get("candidatePostId") or item.get("postId") or "").strip() for item in attempts):
+        return False
+    has_no_cookie_terminal = False
+    has_cookie_no_post = False
+    for item in attempts:
+        if not isinstance(item, dict):
+            continue
+        method = str(item.get("method") or "")
+        reason = str(item.get("reason") or "").lower()
+        if method == "no_cookie" and (
+            _is_no_posts_latest_post_reason(reason)
+            or reason == "auth_wall"
+            or reason == "checkpoint_detected"
+            or reason.startswith("unsupported_browser_interstitial")
+        ):
+            has_no_cookie_terminal = True
+        if method == "with_cookie" and _is_no_posts_latest_post_reason(reason):
+            has_cookie_no_post = True
+    return has_no_cookie_terminal and has_cookie_no_post
 
 
 def _with_query_param(url: str, query: str) -> str:
