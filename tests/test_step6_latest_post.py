@@ -625,6 +625,35 @@ class Step6LatestPostTests(unittest.TestCase):
         self.assertNotIn("tail-that-should-not-be-read", fetch.text)
         self.assertGreaterEqual(perf_counter.call_count, 2)
 
+    @patch("app_modules.features.latest_post.requests.get")
+    def test_fetch_text_skips_body_for_login_redirect(self, get):
+        get.return_value = _stream_response(
+            [b"body-that-should-not-be-read"],
+            url="https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Ftest.user",
+        )
+
+        fetch = _fetch_text("https://www.facebook.com/test.user?sk=posts", {"User-Agent": "test"}, 7)
+
+        self.assertEqual(fetch.http_code, 200)
+        self.assertEqual(fetch.text, "")
+        self.assertIn("/login/", fetch.final_url)
+        self.assertFalse(get.return_value.iterated)
+
+    @patch("app_modules.features.latest_post.requests.get")
+    def test_fetch_text_stops_after_terminal_checkpoint_body(self, get):
+        get.return_value = _stream_response(
+            [
+                b"checkpoint challenge",
+                b"tail-that-should-not-be-read",
+            ],
+        )
+
+        fetch = _fetch_text("https://www.facebook.com/test.user?sk=posts", {"User-Agent": "test"}, 7)
+
+        self.assertEqual(fetch.http_code, 200)
+        self.assertIn("checkpoint", fetch.text)
+        self.assertNotIn("tail-that-should-not-be-read", fetch.text)
+
 
 def _resolved(uid="", username="", resolver_name=""):
     return ResolvedInput(
@@ -651,11 +680,12 @@ def _cookie_account(c_user="100000000000099"):
 
 class _FakeStreamResponse:
     status_code = 200
-    url = "https://www.facebook.com/test.user?sk=posts"
     encoding = "utf-8"
 
-    def __init__(self, chunks):
+    def __init__(self, chunks, url="https://www.facebook.com/test.user?sk=posts"):
         self._chunks = list(chunks)
+        self.url = url
+        self.iterated = False
 
     def __enter__(self):
         return self
@@ -664,11 +694,12 @@ class _FakeStreamResponse:
         return False
 
     def iter_content(self, chunk_size=65536):
+        self.iterated = True
         yield from self._chunks
 
 
-def _stream_response(chunks):
-    return _FakeStreamResponse(chunks)
+def _stream_response(chunks, url="https://www.facebook.com/test.user?sk=posts"):
+    return _FakeStreamResponse(chunks, url=url)
 
 
 if __name__ == "__main__":

@@ -82,7 +82,7 @@ def health_payload() -> dict[str, Any]:
         "ok": True,
         "service": config.app_name,
         "version": config.version,
-        "codeVersion": "step111-checkpost-empty-content-no-posts",
+        "codeVersion": "step112-checkpost-fast-terminal-stop",
     }
 
 

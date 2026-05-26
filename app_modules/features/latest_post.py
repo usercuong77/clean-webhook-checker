@@ -1199,11 +1199,19 @@ def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchRe
             allow_redirects=True,
             stream=True,
         ) as response:
+            final_url = response.url or url
+            if _is_fast_terminal_latest_post_final_url(final_url):
+                return FetchResult(
+                    http_code=response.status_code,
+                    text="",
+                    final_url=final_url,
+                    reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
+                )
             text = _read_response_text_limited(response)
             return FetchResult(
                 http_code=response.status_code,
                 text=text,
-                final_url=response.url or url,
+                final_url=final_url,
                 reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
             )
     except requests.RequestException as exc:
@@ -1232,8 +1240,11 @@ def _read_response_text_limited(response: requests.Response) -> str:
         chunks.append(chunk)
         total += len(chunk)
 
+        text = b"".join(chunks).decode(encoding, errors="ignore")
+        if _has_fast_terminal_latest_post_body(text):
+            return text
+
         if total >= next_check_at:
-            text = b"".join(chunks).decode(encoding, errors="ignore")
             if _has_enough_latest_post_payload_for_stream_stop(text, total):
                 return text
             next_check_at += _stream_check_interval_bytes()
@@ -1261,6 +1272,33 @@ def _request_timeout_tuple(timeout: float) -> tuple[float, float]:
     read_timeout = max(2.0, float(timeout or 0))
     connect_timeout = min(4.0, max(1.0, read_timeout / 2))
     return (connect_timeout, read_timeout)
+
+
+def _is_fast_terminal_latest_post_final_url(url_raw: Any) -> bool:
+    parsed = urlsplit(str(url_raw or ""))
+    if "facebook.com" not in parsed.netloc.lower():
+        return False
+    first_segment = parsed.path.strip("/").split("/", 1)[0].strip().lower()
+    return first_segment in {"login", "checkpoint", "recover", "security", "accounts"}
+
+
+def _has_fast_terminal_latest_post_body(text_raw: Any) -> bool:
+    text = str(text_raw or "").lower()
+    return (
+        "checkpoint" in text
+        or "login_form" in text
+        or "log in or sign up" in text
+        or "you must log in" in text
+        or "unsupported-interstitial" in text
+        or "browser_unsupported" in text
+        or "this browser isn't supported" in text
+        or "this browser is not supported" in text
+        or "weblite_unsupported" in text
+        or "content isn't available" in text
+        or "this content isn't available" in text
+        or "page isn't available" in text
+        or "this page isn't available" in text
+    )
 
 
 def _headers_for_candidate(candidate: CookieCandidate) -> list[tuple[str, dict[str, str]]]:
