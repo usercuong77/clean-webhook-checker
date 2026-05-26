@@ -348,7 +348,6 @@ def get_latest_post_direct_from_input(
                 if (
                     candidate.has_cookie
                     and _is_direct_cookie_terminal_reason(fail_reason)
-                    and not _should_retry_known_identity_route_before_next_cookie(fail_reason, direct_uid, direct_username)
                     and not route_expanded
                     and not (direct_uid and direct_username)
                 ):
@@ -620,13 +619,6 @@ def _direct_cookie_negative_stop_reason(
     if reason.startswith("profile_unavailable"):
         return "profile_unavailable_after_cookie"
     return ""
-
-
-def _should_retry_known_identity_route_before_next_cookie(reason_raw: Any, direct_uid: str, direct_username: str) -> bool:
-    reason = str(reason_raw or "").lower()
-    if not reason.startswith("latest_post_not_found"):
-        return False
-    return bool(direct_uid or direct_username)
 
 
 def _with_query_param(url: str, query: str) -> str:
