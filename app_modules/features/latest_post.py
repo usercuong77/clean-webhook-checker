@@ -287,7 +287,9 @@ def get_latest_post_direct_from_input(
                         if attempt_count >= max_attempts:
                             stop_all_candidates = True
                             break
-                        continue
+                        attempt["fastFallbackToCookie"] = True
+                        move_to_next_candidate = True
+                        break
 
                     post_link = extract_facebook_post_url_from_html(fetch.text) or build_direct_latest_post_link(
                         cleaned_input,
@@ -556,6 +558,7 @@ def _is_direct_cookie_terminal_reason(reason_raw: Any) -> bool:
         reason == "auth_wall"
         or reason == "checkpoint_detected"
         or reason == "profile_unavailable"
+        or reason.startswith("latest_post_not_found")
         or reason.startswith("unsupported_browser_interstitial")
     )
 
@@ -1587,9 +1590,9 @@ def _stream_stop_after_post_bytes() -> int:
 
 def _stream_fetch_deadline_seconds() -> float:
     try:
-        configured = float(os.getenv("LATEST_POST_STREAM_FETCH_DEADLINE_SEC", "12"))
+        configured = float(os.getenv("LATEST_POST_STREAM_FETCH_DEADLINE_SEC", "5"))
     except ValueError:
-        configured = 12.0
+        configured = 5.0
     return max(4.0, min(configured, 30.0))
 
 
