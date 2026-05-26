@@ -268,7 +268,10 @@ def get_latest_post_direct_from_input(
                         route_expanded = True
                     if not direct_username:
                         direct_username = discovered_username
-                    _append_direct_username_probe_urls(probe_urls, discovered_username)
+                    if candidate.has_cookie:
+                        _append_direct_username_probe_urls(probe_urls, discovered_username)
+                    else:
+                        _prepend_direct_username_probe_urls(probe_urls, discovered_username)
                 parsed = parse_latest_post_from_html(fetch.text)
                 has_post = bool(parsed and is_latest_post_id_token(parsed.get("postId")))
                 has_evidence = bool(has_post and has_latest_post_evidence_in_html(fetch.text, parsed.get("postId")))
@@ -372,6 +375,22 @@ def _append_direct_username_probe_urls(probe_urls: list[str], username: str) -> 
         if key and key not in seen:
             probe_urls.append(url)
             seen.add(key)
+
+
+def _prepend_direct_username_probe_urls(probe_urls: list[str], username: str) -> None:
+    clean_username = str(username or "").strip().strip("/")
+    if not clean_username:
+        return
+    additions = build_direct_latest_post_probe_urls(f"https://www.facebook.com/{clean_username}")
+    seen = {str(url or "").strip().lower() for url in probe_urls}
+    to_add: list[str] = []
+    for url in additions:
+        key = str(url or "").strip().lower()
+        if key and key not in seen:
+            to_add.append(url)
+            seen.add(key)
+    if to_add:
+        probe_urls[:0] = to_add
 
 
 def _prepend_direct_uid_probe_urls(probe_urls: list[str], uid: str) -> None:

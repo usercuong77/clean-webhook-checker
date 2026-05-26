@@ -447,6 +447,40 @@ class Step6LatestPostTests(unittest.TestCase):
 
     @patch("app_modules.features.latest_post.load_cookie_accounts")
     @patch("app_modules.features.latest_post._fetch_text")
+    def test_checkpost_share_redirect_retries_username_before_more_share_urls(
+        self, fetch_text, load_cookie_accounts
+    ):
+        load_cookie_accounts.return_value = [_cookie_account()]
+        fetch_text.side_effect = [
+            FetchResult(
+                200,
+                "Log in or sign up to view",
+                "https://www.facebook.com/thanh.duyen.37570?sk=posts",
+                "ok",
+            ),
+            FetchResult(
+                200,
+                (
+                    '"post_id":"1281769946402126"'
+                    '"publish_time":1760000000'
+                    '"message":{"text":"Username route latest post"}'
+                ),
+                "https://www.facebook.com/thanh.duyen.37570?sk=posts",
+                "ok",
+            ),
+        ]
+
+        payload = get_latest_post_direct_from_input("https://www.facebook.com/share/1G9Yb3Xs1R/")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["username"], "thanh.duyen.37570")
+        self.assertEqual(payload["method"], "direct_with_cookie")
+        self.assertEqual(payload["content"], "Username route latest post")
+        called_urls = [call.args[0] for call in fetch_text.call_args_list]
+        self.assertEqual(called_urls[1], "https://www.facebook.com/thanh.duyen.37570?sk=posts")
+
+    @patch("app_modules.features.latest_post.load_cookie_accounts")
+    @patch("app_modules.features.latest_post._fetch_text")
     def test_checkpost_direct_retries_no_cookie_without_requires_cookie_cache(self, fetch_text, load_cookie_accounts):
         load_cookie_accounts.return_value = [_cookie_account()]
         fetch_text.side_effect = [
