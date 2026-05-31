@@ -116,6 +116,10 @@ COMMENT_CONTEXT_MARKERS = (
     "comment_id",
     "feedback_comment",
     "comment_list",
+    "profilegeminiweakreferencelink",
+    "weak_reference",
+    "work_foreign_entity_info",
+    "entity_is_weak_reference",
 )
 TICK_PUBLIC_READ_CAP_BYTES = 1_800_000
 TICK_COOKIE_READ_CAP_BYTES = 950_000
@@ -229,7 +233,7 @@ def resolve_profile_name(resolved: ResolvedInput, include_verified: bool = False
                 )
                 continue
             name = extract_profile_name(fetch.text)
-            verified_label = extract_profile_verified_label(fetch.text, name)
+            verified_label = extract_profile_verified_label(fetch.text, name, uid)
             probe = _probe_record(
                 "profile_name_cookie",
                 url,
@@ -484,7 +488,7 @@ def _should_confirm_public_name_only_result(normalized: str, result: ProfileTick
 
 
 def _profile_tick_confirm_any_name_only() -> bool:
-    value = str(os.getenv("PROFILE_TICK_CONFIRM_ANY_NAME_ONLY", "1") or "").strip().lower()
+    value = str(os.getenv("PROFILE_TICK_CONFIRM_ANY_NAME_ONLY", "0") or "").strip().lower()
     return value not in {"0", "false", "off", "no"}
 
 
@@ -506,9 +510,9 @@ def _profile_tick_final_public_retry_count() -> int:
 
 def _public_tick_name_only_extra_probe_count() -> int:
     try:
-        configured = int(os.getenv("PROFILE_TICK_NAME_ONLY_EXTRA_PUBLIC_PROBES", "3"))
+        configured = int(os.getenv("PROFILE_TICK_NAME_ONLY_EXTRA_PUBLIC_PROBES", "1"))
     except ValueError:
-        configured = 3
+        configured = 1
     return max(0, min(configured, 8))
 
 
@@ -901,10 +905,10 @@ def _profile_tick_result_from_fetch(
     probes: list[dict[str, Any]],
     cookie_account: str = "",
 ) -> ProfileTickResult:
-    name = extract_profile_name(fetch.text)
-    verified_label = extract_profile_verified_label(fetch.text, name)
-    display_name = _display_profile_name_value(name)
     uid = raw_uid or extract_uid_from_url(fetch.final_url)
+    name = extract_profile_name(fetch.text)
+    verified_label = extract_profile_verified_label(fetch.text, name, uid)
+    display_name = _display_profile_name_value(name)
     username = raw_username or _profile_tick_username_from_url(fetch.final_url)
     canonical_url = fetch.final_url or fallback_canonical_url
     reason = _profile_tick_reason(reason_prefix, name, verified_label, fetch)
@@ -1165,7 +1169,7 @@ def extract_profile_name(html: str) -> str:
     return ""
 
 
-def extract_profile_verified_label(html: str, profile_name: str = "") -> str:
+def extract_profile_verified_label(html: str, profile_name: str = "", profile_uid: str = "") -> str:
     text = str(html or "")
     if not text:
         return ""
@@ -1187,9 +1191,41 @@ def extract_profile_verified_label(html: str, profile_name: str = "") -> str:
 
     for pattern in VERIFIED_MARKER_PATTERNS:
         match = pattern.search(header)
-        if match and _verified_window_is_profile_context(header, match.start(), profile_name):
+        if (
+            match
+            and _verified_window_is_profile_context(header, match.start(), profile_name)
+            and _verified_structured_marker_matches_owner(header, match.start(), profile_uid, pattern)
+        ):
             return VERIFIED_ACCOUNT_LABEL
     return ""
+
+
+def _verified_structured_marker_matches_owner(
+    header: str,
+    marker_index: int,
+    profile_uid: str,
+    pattern: re.Pattern,
+) -> bool:
+    pattern_text = str(getattr(pattern, "pattern", "") or "").lower()
+    if "is_verified" not in pattern_text and "isverified" not in pattern_text:
+        return True
+
+    uid = normalize_uid(str(profile_uid or ""))
+    if not uid:
+        return True
+
+    local = header[max(0, marker_index - 1800): min(len(header), marker_index + 800)]
+    if uid in local:
+        return True
+
+    local_ids = set(
+        re.findall(
+            r'"(?:id|profile_id|profile_owner_id|profile_owner|actorid|actorID)"\s*:\s*"?(\d{5,20})',
+            local,
+            flags=re.IGNORECASE,
+        )
+    )
+    return not local_ids
 
 
 def is_valid_profile_name(raw_name: str) -> bool:
@@ -1256,20 +1292,14 @@ def _verified_marker_is_scoped(header: str, marker: str, profile_name: str = "")
 
 
 def _verified_window_is_profile_context(header: str, marker_index: int, profile_name: str = "") -> bool:
-    window = header[max(0, marker_index - 90000): min(len(header), marker_index + 90000)]
+    window = header[max(0, marker_index - 30000): min(len(header), marker_index + 30000)]
     lowered = window.lower()
     if any(marker in lowered for marker in COMMENT_CONTEXT_MARKERS):
         return False
     if any(marker in lowered for marker in PROFILE_HEADER_CONTEXT_MARKERS):
         return True
 
-    clean_name = _display_profile_name_value(profile_name)
-    if clean_name:
-        name_index = header.find(clean_name)
-        if 0 <= name_index <= 220000 and abs(marker_index - name_index) <= 180000:
-            return True
-
-    return marker_index <= 180000
+    return False
 
 
 def clear_profile_name_cache() -> None:

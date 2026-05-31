@@ -81,6 +81,29 @@ class Step5ProfileNameTests(unittest.TestCase):
 
         self.assertEqual(extract_profile_verified_label(html, "Nth Wag"), "")
 
+    def test_verified_marker_requires_profile_context(self):
+        html = """
+        <html>
+          <head><meta property="og:title" content="Long Tao"></head>
+          <body>
+            Long Tao
+            <script>{"other_surface":"Verified account","is_verified":true}</script>
+          </body>
+        </html>
+        """
+
+        self.assertEqual(extract_profile_verified_label(html, "Long Tao"), "")
+
+    def test_verified_marker_rejects_verified_weak_reference_for_other_uid(self):
+        html = """
+        ProfileCometHeader <h1>Long Tao</h1>
+        {"__typename":"User","id":"100064354467010","profile_url":"https:\\/\\/www.facebook.com\\/AppStore",
+        "__dr":"ProfileGeminiWeakReferenceLink.react","is_verified":true,
+        "entity_is_weak_reference":false,"text":"Boss tai App Store"}
+        """
+
+        self.assertEqual(extract_profile_verified_label(html, "Long Tao", "100006932193350"), "")
+
     def test_builds_username_and_uid_urls(self):
         resolved = _resolved(uid="100000000000001", username="test.user")
         urls = build_profile_name_urls(resolved)
