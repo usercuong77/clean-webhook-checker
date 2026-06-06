@@ -62,11 +62,16 @@ def probe_mode2_graph_app_token(uid: str) -> ProbeResult:
     payload = _parse_json_response(response)
     error = payload.get("error") if isinstance(payload, dict) else None
     if isinstance(error, dict):
+        reason = _graph_error_reason(error)
+        is_terminal_uid_error = reason in {
+            "graph_token_error_unsupported",
+            "graph_token_error_unavailable",
+        }
         return ProbeResult(
-            status="DIE",
-            confidence="strong",
+            status="DIE" if is_terminal_uid_error else "UNKNOWN",
+            confidence="strong" if is_terminal_uid_error else "weak",
             source="mode2_graph_app_token",
-            reason=_graph_error_reason(error),
+            reason=reason,
             http_code=http_code,
             details={
                 "message": str(error.get("message") or "")[:220],
