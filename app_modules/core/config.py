@@ -16,6 +16,7 @@ class ServiceConfig:
     smm_api_key: str
     smm_api_timeout_seconds: float
     viplike_order_enabled: bool
+    facebook_graph_picture_token: str
 
 
 def _first_env(keys: tuple[str, ...]) -> str:
@@ -55,4 +56,11 @@ def get_config() -> ServiceConfig:
         smm_api_key=_first_env(("SMM_API_KEY", "VIPLIKE_SMM_API_KEY")),
         smm_api_timeout_seconds=float(os.getenv("SMM_API_TIMEOUT_SEC", os.getenv("SMM_API_TIMEOUT", "6"))),
         viplike_order_enabled=_env_flag("VIPLIKE_ORDER_ENABLED", False),
+        facebook_graph_picture_token=_first_env(
+            (
+                "FACEBOOK_GRAPH_PICTURE_TOKEN",
+                "FB_GRAPH_PICTURE_TOKEN",
+                "GRAPH_PICTURE_TOKEN",
+            )
+        ),
     )

@@ -31,8 +31,8 @@ MODE_CONFIGS: dict[str, ModeConfig] = {
     "2": ModeConfig(
         mode="2",
         source="mode2_graph_app_token",
-        description="Graph picture with app token",
-        implemented=False,
+        description="Graph picture with configured token",
+        implemented=True,
         handler=probe_mode2_graph_app_token,
     ),
     "3": ModeConfig(
