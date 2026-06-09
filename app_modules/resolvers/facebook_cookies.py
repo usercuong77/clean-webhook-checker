@@ -96,7 +96,8 @@ def load_cookie_accounts(
         raw_value = str(environ.get(key, "") or "").strip()
         if not raw_value:
             continue
-        accounts = _accounts_from_payload(_parse_json(raw_value), key)
+        parsed = _parse_json(raw_value)
+        accounts = _accounts_from_payload(raw_value if parsed is None else parsed, key)
         if accounts:
             return accounts
 
@@ -180,10 +181,16 @@ def _normalize_cookie_map(item: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _normalize_cookie_payload(payload: Any) -> list[Any]:
+    if isinstance(payload, str):
+        return _normalize_raw_cookie_header(payload)
     if isinstance(payload, list):
+        if _is_browser_cookie_export(payload):
+            return [_browser_cookie_export_to_cookie_map(payload)]
         return payload
     if isinstance(payload, dict):
         if isinstance(payload.get("cookies"), list):
+            if _is_browser_cookie_export(payload["cookies"]):
+                return [_browser_cookie_export_to_cookie_map(payload["cookies"])]
             return payload["cookies"]
         if isinstance(payload.get("accounts"), list):
             return payload["accounts"]
@@ -193,7 +200,9 @@ def _normalize_cookie_payload(payload: Any) -> list[Any]:
 
 def _read_json_file(path: Path) -> Any:
     try:
-        return _parse_json(path.read_text(encoding="utf-8-sig", errors="ignore"))
+        raw = path.read_text(encoding="utf-8-sig", errors="ignore")
+        parsed = _parse_json(raw)
+        return raw if parsed is None else parsed
     except OSError:
         return None
 
@@ -203,6 +212,61 @@ def _parse_json(raw_value: str) -> Any:
         return json.loads(raw_value)
     except (TypeError, json.JSONDecodeError):
         return None
+
+
+def _normalize_raw_cookie_header(raw_value: str) -> list[dict[str, str]]:
+    raw = _strip_wrapping_quotes(str(raw_value or "").strip())
+    if not raw or "=" not in raw or ";" not in raw:
+        return []
+
+    cookies: dict[str, str] = {}
+    for part in raw.split(";"):
+        item = part.strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        clean_key = key.strip()
+        clean_value = value.strip()
+        if clean_key and clean_value:
+            cookies[clean_key] = clean_value
+    return [cookies] if cookies else []
+
+
+def _is_browser_cookie_export(payload: list[Any]) -> bool:
+    if not payload:
+        return False
+    named_cookie_count = 0
+    auth_cookie_count = 0
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "") or "").strip()
+        value = str(item.get("value", "") or "").strip()
+        if not name or not value:
+            continue
+        named_cookie_count += 1
+        if name in {"c_user", "xs"}:
+            auth_cookie_count += 1
+    return named_cookie_count > 0 and auth_cookie_count >= 2
+
+
+def _browser_cookie_export_to_cookie_map(payload: list[Any]) -> dict[str, str]:
+    cookies: dict[str, str] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "") or "").strip()
+        value = str(item.get("value", "") or "").strip()
+        if name and value:
+            cookies[name] = value
+    return cookies
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    raw = str(value or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"'", '"'}:
+        return raw[1:-1].strip()
+    return raw
 
 
 def _account_from_individual_env(environ: Mapping[str, str]) -> CookieAccount | None:

@@ -52,6 +52,55 @@ class Step44CookieLoaderTests(unittest.TestCase):
         self.assertEqual(accounts[0].source, "UID_CHECKER_FB_COOKIES_JSON")
         self.assertTrue(accounts[0].is_usable)
 
+    def test_loads_raw_cookie_header_from_json_string_env(self):
+        raw = (
+            "datr=fake-datr;sb=fake-sb;c_user=100000000000006;"
+            "xs=fake-xs-token;fr=fake-fr;presence=fake-presence;"
+            "useragent=TW96aWxsYS81LjAgKFdpbmRvd3MgTlQgMTAuMDsgV2luNjQ7IHg2NCkg"
+            "Q2hyb21lLzE0MC4wLjAuMCBTYWZhcmkvNTM3LjM2;"
+        )
+        env = {"UID_CHECKER_FB_COOKIES_JSON": json.dumps(raw)}
+
+        account = load_cookie_accounts(env=env)[0]
+
+        self.assertEqual(account.c_user, "100000000000006")
+        self.assertTrue(account.is_usable)
+        self.assertIn("fake-xs-token", cookie_header(account))
+        self.assertNotIn("useragent=", cookie_header(account))
+        self.assertIn("Chrome/140.0.0.0", account.browser_user_agent)
+
+    def test_loads_raw_cookie_header_from_txt_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cookie_file = Path(tmpdir) / "cookies.txt"
+            cookie_file.write_text(
+                '"datr=fake-datr; sb=fake-sb; c_user=100000000000007; xs=fake-xs-token;"',
+                encoding="utf-8",
+            )
+
+            account = load_cookie_accounts(path=cookie_file, env={})[0]
+
+        self.assertEqual(account.c_user, "100000000000007")
+        self.assertTrue(account.is_usable)
+
+    def test_loads_browser_cookie_export_array(self):
+        env = {
+            "UID_CHECKER_FB_COOKIES_JSON": json.dumps(
+                [
+                    {"domain": ".facebook.com", "name": "datr", "value": "fake-datr"},
+                    {"domain": ".facebook.com", "name": "sb", "value": "fake-sb"},
+                    {"domain": ".facebook.com", "name": "c_user", "value": "100000000000008"},
+                    {"domain": ".facebook.com", "name": "xs", "value": "fake-xs-token"},
+                    {"domain": ".facebook.com", "name": "fr", "value": "fake-fr"},
+                ]
+            )
+        }
+
+        account = load_cookie_accounts(env=env)[0]
+
+        self.assertEqual(account.c_user, "100000000000008")
+        self.assertTrue(account.is_usable)
+        self.assertIn("fake-fr", cookie_header(account))
+
     def test_loads_individual_cookie_fields_from_env(self):
         env = {
             "UID_CHECKER_FB_C_USER": "100000000000003",
