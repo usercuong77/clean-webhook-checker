@@ -3,11 +3,18 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app_modules.api.controller import CheckRequest, check_input
+from app_modules.resolvers.fb_uid_lite_adapter import LiteUidResolution
 from app_modules.resolvers.facebook_uid_resolver import resolve_uid_from_any_input
 from app_modules.resolvers.tds_uid_resolver import resolve_uid_with_tds_api
 
 
 class Step45TdsUidResolverTests(unittest.TestCase):
+    def setUp(self):
+        self._lite_patcher = patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_lite_fallback")
+        self._lite_resolver = self._lite_patcher.start()
+        self._lite_resolver.return_value = LiteUidResolution("", "", "fb_uid_lite", "lite_no_uid")
+        self.addCleanup(self._lite_patcher.stop)
+
     @patch("app_modules.resolvers.tds_uid_resolver.requests.post")
     def test_tds_uid_resolver_returns_uid(self, post):
         response = Mock()
@@ -69,7 +76,26 @@ class Step45TdsUidResolverTests(unittest.TestCase):
 
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
-    def test_facebook_resolver_uses_tds_before_public_probe(self, tds_api, fetch_text):
+    def test_facebook_resolver_uses_lite_before_tds_and_public_probe(self, tds_api, fetch_text):
+        self._lite_resolver.return_value = LiteUidResolution(
+            "https://www.facebook.com/luanboy92/",
+            "534838088",
+            "fb_uid_lite:about",
+            "uid_found_lite",
+            score=100,
+        )
+
+        result = resolve_uid_from_any_input("https://www.facebook.com/luanboy92/")
+
+        self.assertEqual(result.uid, "534838088")
+        self.assertEqual(result.source, "fb_uid_lite:about")
+        self.assertEqual(result.reason, "uid_found_lite")
+        self.assertEqual(tds_api.call_count, 0)
+        self.assertEqual(fetch_text.call_count, 0)
+
+    @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
+    @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
+    def test_facebook_resolver_uses_tds_after_lite_miss_before_public_probe(self, tds_api, fetch_text):
         tds_api.return_value = Mock(
             uid="534838088",
             name="Luan Nguyen",
@@ -140,7 +166,7 @@ class Step45TdsUidResolverTests(unittest.TestCase):
     @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
-    def test_facebook_resolver_does_not_fall_back_when_tds_rate_limited(self, tds_api, fetch_text, cookie_fallback):
+    def test_facebook_resolver_falls_back_to_internal_when_tds_rate_limited(self, tds_api, fetch_text, cookie_fallback):
         tds_api.return_value = Mock(
             uid="",
             name="",
@@ -158,10 +184,10 @@ class Step45TdsUidResolverTests(unittest.TestCase):
 
         result = resolve_uid_from_any_input("https://www.facebook.com/unknownuser")
 
-        self.assertEqual(result.uid, "")
-        self.assertEqual(result.source, "tds_uid_api")
-        self.assertEqual(result.reason, "tds_rate_limited")
-        self.assertEqual(fetch_text.call_count, 0)
+        self.assertEqual(result.uid, "100000000000099")
+        self.assertEqual(result.source, "uid_html_probe")
+        self.assertEqual(result.reason, "uid_found_for_username_in_html")
+        self.assertGreater(fetch_text.call_count, 0)
         self.assertEqual(cookie_fallback.call_count, 0)
 
     @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
@@ -189,9 +215,10 @@ class Step45TdsUidResolverTests(unittest.TestCase):
         self.assertEqual(result.source, "uid_html_probe")
         self.assertTrue(any(probe.get("source") == "tds_uid_api" for probe in result.probes))
 
+    @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
-    def test_tds_link_not_found_returns_die_without_mode_probe(self, tds_api, fetch_text):
+    def test_tds_link_not_found_returns_die_without_mode_probe(self, tds_api, fetch_text, cookie_fallback):
         tds_api.return_value = Mock(
             uid="",
             name="",
@@ -199,17 +226,25 @@ class Step45TdsUidResolverTests(unittest.TestCase):
             reason="tds_link_not_found",
             http_code=200,
         )
+        fetch_text.return_value = Mock(
+            http_code=200,
+            text="",
+            final_url="https://www.facebook.com/missing",
+            reason="ok",
+        )
+        cookie_fallback.return_value = Mock(uid="", source="uid_cookie_resolver", reason="no_usable_cookie_accounts", probes=[])
 
         payload = check_input(CheckRequest(input="https://www.facebook.com/missing", mode="1", includeName=True))
 
         self.assertEqual(payload["status"], "DIE")
-        self.assertEqual(payload["source"], "tds_uid_api")
-        self.assertEqual(payload["reason"], "tds_link_not_found")
-        self.assertEqual(fetch_text.call_count, 0)
+        self.assertEqual(payload["source"], "uid_resolver")
+        self.assertEqual(payload["reason"], "uid_not_found_after_public_probe_no_cookie_accounts")
+        self.assertGreater(fetch_text.call_count, 0)
 
+    @patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_cookie_fallback")
     @patch("app_modules.resolvers.facebook_uid_resolver._fetch_text")
     @patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
-    def test_tds_rate_limit_returns_unknown_without_public_probe(self, tds_api, fetch_text):
+    def test_tds_rate_limit_falls_back_to_internal_resolver(self, tds_api, fetch_text, cookie_fallback):
         tds_api.return_value = Mock(
             uid="",
             name="",
@@ -217,13 +252,20 @@ class Step45TdsUidResolverTests(unittest.TestCase):
             reason="tds_rate_limited",
             http_code=200,
         )
+        fetch_text.return_value = Mock(
+            http_code=200,
+            text="",
+            final_url="https://www.facebook.com/rate-limited",
+            reason="ok",
+        )
+        cookie_fallback.return_value = Mock(uid="", source="uid_cookie_resolver", reason="no_usable_cookie_accounts", probes=[])
 
         payload = check_input(CheckRequest(input="https://www.facebook.com/rate-limited", mode="1", includeName=True))
 
         self.assertEqual(payload["status"], "DIE")
-        self.assertEqual(payload["source"], "tds_uid_api")
-        self.assertEqual(payload["reason"], "tds_rate_limited")
-        self.assertEqual(fetch_text.call_count, 0)
+        self.assertEqual(payload["source"], "uid_resolver")
+        self.assertEqual(payload["reason"], "uid_not_found_after_public_probe_no_cookie_accounts")
+        self.assertGreater(fetch_text.call_count, 0)
 
 
 if __name__ == "__main__":

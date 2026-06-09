@@ -17,6 +17,7 @@ from app_modules.resolvers.facebook_uid_resolver import (
     resolve_uid_from_any_input,
 )
 from app_modules.resolvers.facebook_uid_cookie_resolver import CookieUidResolution
+from app_modules.resolvers.fb_uid_lite_adapter import LiteUidResolution
 from app_modules.resolvers.tds_uid_resolver import TdsUidResolution
 from app_modules.checkers.check_modes import ModeConfig
 from app_modules.checkers.probe_result import ProbeResult
@@ -24,6 +25,11 @@ from app_modules.checkers.probe_result import ProbeResult
 
 class Step42UidResolverTests(unittest.TestCase):
     def setUp(self):
+        self._lite_patcher = patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_lite_fallback")
+        self._lite_resolver = self._lite_patcher.start()
+        self._lite_resolver.return_value = LiteUidResolution("", "", "fb_uid_lite", "lite_no_uid")
+        self.addCleanup(self._lite_patcher.stop)
+
         self._tds_patcher = patch("app_modules.resolvers.facebook_uid_resolver.resolve_uid_with_tds_api")
         self._tds_api = self._tds_patcher.start()
         self._tds_api.return_value = TdsUidResolution("", "", "tds_uid_api", "tds_api_unavailable_after_deadline")

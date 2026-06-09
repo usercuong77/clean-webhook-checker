@@ -4,11 +4,18 @@ from unittest.mock import patch
 
 from app_modules.api.controller import CheckRequest, check_input, health_payload
 from app_modules.resolvers.facebook_uid_resolver import FetchResult
+from app_modules.resolvers.fb_uid_lite_adapter import LiteUidResolution
 from app_modules.resolvers.tds_uid_resolver import TdsUidResolution
 from app_modules.resolvers.uid_resolver import resolve_input
 
 
 class Step3MinimalTests(unittest.TestCase):
+    def setUp(self):
+        self._lite_patcher = patch("app_modules.resolvers.facebook_uid_resolver._resolve_uid_with_lite_fallback")
+        self._lite_resolver = self._lite_patcher.start()
+        self._lite_resolver.return_value = LiteUidResolution("", "", "fb_uid_lite", "lite_no_uid")
+        self.addCleanup(self._lite_patcher.stop)
+
     def test_health_payload(self):
         payload = health_payload()
         self.assertTrue(payload["ok"])

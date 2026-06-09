@@ -180,6 +180,27 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
             [],
         )
 
+    probes: list[dict[str, Any]] = []
+    lite_result = _resolve_uid_with_lite_fallback(normalized)
+    lite_probe = {
+        "source": lite_result.source,
+        "reason": lite_result.reason,
+        "score": lite_result.score,
+        "elapsedMs": lite_result.elapsed_ms,
+    }
+    if lite_result.uid:
+        lite_probe["foundUid"] = lite_result.uid
+        return _uid_result(
+            value,
+            lite_result.uid,
+            username,
+            lite_result.source,
+            lite_result.reason,
+            [lite_probe],
+        )
+    if lite_result.reason not in {"empty_input", "lite_disabled"}:
+        probes.append(lite_probe)
+
     tds_result = resolve_uid_with_tds_api(normalized)
     tds_probe = {
         "source": tds_result.source,
@@ -196,21 +217,9 @@ def resolve_uid_from_any_input(raw: Any) -> UidResolution:
             username,
             tds_result.source,
             tds_result.reason,
-            [tds_probe],
+            probes + [tds_probe],
         )
 
-    if not _tds_allows_public_fallback(tds_result.reason):
-        return UidResolution(
-            input=value,
-            uid="",
-            username=username,
-            canonical_url=_canonical_from_normalized(normalized),
-            source=tds_result.source,
-            reason=tds_result.reason,
-            probes=[tds_probe],
-        )
-
-    probes: list[dict[str, Any]] = []
     if tds_result.reason not in {"empty_input"}:
         probes.append(tds_probe)
     timeout = _uid_public_probe_timeout()
@@ -876,6 +885,26 @@ def _header_label(headers: Mapping[str, str]) -> str:
     return user_agent[:80]
 
 
+def _resolve_uid_with_lite_fallback(normalized: str):
+    if not _lite_resolver_enabled():
+        from app_modules.resolvers.fb_uid_lite_adapter import LiteUidResolution
+
+        return LiteUidResolution(str(normalized or ""), "", "fb_uid_lite", "lite_disabled")
+
+    from app_modules.resolvers.fb_uid_lite_adapter import resolve_uid_with_lite_sync
+
+    return resolve_uid_with_lite_sync(normalized)
+
+
+def _lite_resolver_enabled() -> bool:
+    return str(os.getenv("UID_LITE_RESOLVER_ENABLED", "1") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 def _resolve_uid_with_cookie_fallback(normalized: str):
     from app_modules.resolvers.facebook_uid_cookie_resolver import resolve_uid_with_cookies
 
@@ -888,7 +917,3 @@ def _final_uid_not_found_reason(cookie_reason: str) -> str:
     if cookie_reason:
         return "uid_not_found_after_public_and_cookie_probe"
     return "uid_not_found_after_probe"
-
-
-def _tds_allows_public_fallback(reason: str) -> bool:
-    return str(reason or "") == "tds_api_unavailable_after_deadline"

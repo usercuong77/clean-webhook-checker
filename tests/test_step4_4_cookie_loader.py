@@ -4,11 +4,13 @@ import unittest
 from pathlib import Path
 
 from app_modules.resolvers.facebook_cookies import (
+    CookieAccount,
     DEFAULT_LOCAL_COOKIE_FILE,
     cookie_header,
     load_cookie_accounts,
     masked_accounts,
 )
+from app_modules.resolvers import fb_uid_lite_latest
 
 
 class Step44CookieLoaderTests(unittest.TestCase):
@@ -150,6 +152,26 @@ class Step44CookieLoaderTests(unittest.TestCase):
     def test_default_local_cookie_file_points_to_service_root(self):
         self.assertEqual(DEFAULT_LOCAL_COOKIE_FILE.parent.name, "local_secrets")
         self.assertIn(DEFAULT_LOCAL_COOKIE_FILE.parent.parent.name, {"02-render-service", "clean-webhook-checker"})
+
+    def test_lite_client_uses_bot_cookie_pool_only(self):
+        account = CookieAccount(
+            c_user="100000000000009",
+            source="test",
+            index=0,
+            cookies={
+                "c_user": "100000000000009",
+                "xs": "fake-xs-token",
+                "__user_agent": "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36",
+            },
+        )
+
+        with unittest.mock.patch.object(fb_uid_lite_latest, "load_cookie_accounts", return_value=[account]):
+            client = fb_uid_lite_latest.make_client(False)
+
+        self.assertIn("100000000000009", client.headers.get("Cookie", ""))
+        self.assertIn("Chrome/140.0.0.0", client.headers.get("User-Agent", ""))
+        self.assertFalse(hasattr(fb_uid_lite_latest, "DEFAULT_COOKIE"))
+        self.assertFalse(hasattr(fb_uid_lite_latest, "COOKIE"))
 
 
 if __name__ == "__main__":
