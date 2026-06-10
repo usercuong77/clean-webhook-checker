@@ -13,6 +13,8 @@ from app_modules.features.profile_name import resolve_profile_tick_from_input
 from app_modules.features.profile_name_lookup import choose_profile_name
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
 from app_modules.resolvers.facebook_cookies import reload_cookie_accounts_cache
+from app_modules.resolvers import facebook_uid_resolver
+from app_modules.resolvers.fb_uid_lite_adapter import resolve_uid_with_lite_many
 from app_modules.resolvers.tds_uid_resolver import resolve_uid_with_tds_api
 from app_modules.resolvers.uid_resolver import ResolvedInput
 from app_modules.resolvers.uid_resolver import resolve_input
@@ -50,6 +52,10 @@ class RealtimeBulkJob(BaseModel):
 
 class RealtimeBulkRequest(BaseModel):
     jobs: list[RealtimeBulkJob] = Field(default_factory=list)
+
+
+class UidResolveFastRequest(BaseModel):
+    input: str = Field(default="")
 
 
 class VipLikeOrderRequest(BaseModel):
@@ -127,6 +133,121 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
         "probes": live_die.probes,
         "resolverDebug": _resolver_debug_summary(resolved),
     }
+
+
+async def uid_resolve_fast_input(req: UidResolveFastRequest) -> dict[str, Any]:
+    started = perf_counter()
+    raw_input = (req.input or "").strip()
+    normalized = facebook_uid_resolver.normalize_url_input(raw_input) or raw_input
+    direct_uid = (
+        facebook_uid_resolver.normalize_uid(raw_input)
+        or facebook_uid_resolver.extract_uid_from_url(normalized)
+    )
+    username = facebook_uid_resolver.extract_username_from_url(normalized)
+
+    if direct_uid:
+        return _uid_resolve_fast_success(
+            raw_input=raw_input,
+            uid=direct_uid,
+            username=username,
+            name="",
+            canonical_url=f"https://www.facebook.com/profile.php?id={direct_uid}",
+            source="uid_resolve_fast:direct",
+            reason="uid_found_direct",
+            http_code=200,
+            started=started,
+        )
+
+    lite = (await resolve_uid_with_lite_many([normalized or raw_input]))[0]
+    if lite.uid:
+        return _uid_resolve_fast_success(
+            raw_input=raw_input,
+            uid=lite.uid,
+            username=username,
+            name=str(lite.raw.get("name") or "").strip(),
+            canonical_url=f"https://www.facebook.com/profile.php?id={lite.uid}",
+            source=lite.source or "fb_uid_lite",
+            reason=lite.reason or "uid_found_lite",
+            http_code=200,
+            started=started,
+        )
+
+    tds_started = perf_counter()
+    tds = resolve_uid_with_tds_api(
+        normalized or raw_input,
+        timeout=_uid_resolve_fast_tds_timeout(),
+        deadline=_uid_resolve_fast_tds_deadline(),
+    )
+    tds_elapsed = int((perf_counter() - tds_started) * 1000)
+    if tds.uid:
+        return _uid_resolve_fast_success(
+            raw_input=raw_input,
+            uid=tds.uid,
+            username=username,
+            name=tds.name,
+            canonical_url=f"https://www.facebook.com/profile.php?id={tds.uid}",
+            source=tds.source or "tds_uid_api",
+            reason=tds.reason or "uid_found_tds_api",
+            http_code=tds.http_code or 200,
+            started=started,
+        )
+
+    return {
+        "ok": False,
+        "status": "DIE",
+        "confidence": "weak",
+        "uid": "",
+        "username": username,
+        "name": "",
+        "canonicalUrl": normalized,
+        "source": "uid_resolve_fast",
+        "reason": f"uid_not_found_lite_tds:lite={lite.reason}:tds={tds.reason}",
+        "httpCode": tds.http_code or 200,
+        "elapsedMs": int((perf_counter() - started) * 1000),
+        "tdsElapsedMs": tds_elapsed,
+    }
+
+
+def _uid_resolve_fast_success(
+    *,
+    raw_input: str,
+    uid: str,
+    username: str,
+    name: str,
+    canonical_url: str,
+    source: str,
+    reason: str,
+    http_code: int,
+    started: float,
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "status": "LIVE",
+        "confidence": "strong",
+        "input": raw_input,
+        "uid": str(uid or "").strip(),
+        "username": str(username or "").strip(),
+        "name": str(name or "").strip(),
+        "canonicalUrl": canonical_url,
+        "source": source,
+        "reason": reason,
+        "httpCode": http_code,
+        "elapsedMs": int((perf_counter() - started) * 1000),
+    }
+
+
+def _uid_resolve_fast_tds_timeout() -> float:
+    try:
+        return max(0.5, min(float(os.getenv("UID_RESOLVE_FAST_TDS_TIMEOUT_SEC", "3")), 6.0))
+    except ValueError:
+        return 3.0
+
+
+def _uid_resolve_fast_tds_deadline() -> float:
+    try:
+        return max(0.5, min(float(os.getenv("UID_RESOLVE_FAST_TDS_DEADLINE_SEC", "4")), 8.0))
+    except ValueError:
+        return 4.0
 
 
 def check_name_input(req: CheckRequest) -> dict[str, Any]:

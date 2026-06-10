@@ -5,6 +5,7 @@ from app_modules.api.controller import (
     CheckRequest,
     LatestPostRequest,
     RealtimeBulkRequest,
+    UidResolveFastRequest,
     VipLikeOrderRequest,
     check_input,
     check_name_input,
@@ -15,6 +16,7 @@ from app_modules.api.controller import (
     health_payload,
     latest_post_input,
     realtime_check_bulk,
+    uid_resolve_fast_input,
     viplike_order_input,
     viplike_packages_input,
 )
@@ -56,6 +58,7 @@ def root() -> dict:
                 "/checkpost",
                 "/cookies/status",
                 "/cookies/reload",
+                "/uid-resolve-fast",
                 "/realtime/check-bulk",
                 "/viplike/packages",
                 "/viplike/order",
@@ -70,6 +73,13 @@ def root() -> dict:
 def check(req: CheckRequest, x_api_key: str | None = Header(default=None)) -> dict:
     require_api_key(x_api_key)
     return check_input(req)
+
+
+@app.post("/uid-resolve-fast")
+@app.post("/uid-resolve-fast/")
+async def uid_resolve_fast(req: UidResolveFastRequest, x_api_key: str | None = Header(default=None)) -> dict:
+    require_api_key(x_api_key)
+    return await uid_resolve_fast_input(req)
 
 
 @app.post("/checkname")
