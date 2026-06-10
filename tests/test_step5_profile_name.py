@@ -5,6 +5,7 @@ from app_modules.api.controller import CheckRequest, check_input, check_tick_inp
 from app_modules.checkers.live_die import LiveDieResult
 from app_modules.checkers.probe_result import ProbeResult
 from app_modules.features import profile_name as profile_name_module
+from app_modules.features import profile_name_lookup as profile_name_lookup_module
 from app_modules.features.profile_name import (
     build_profile_name_urls,
     choose_profile_name,
@@ -917,6 +918,53 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(first, "Kiều Anh")
         self.assertEqual(second, "Kiều Anh")
         self.assertEqual(fetch_text.call_count, 2)
+
+
+    @patch("app_modules.features.profile_name_lookup.load_cookie_accounts")
+    @patch("app_modules.features.profile_name_lookup._fetch_limited_text")
+    def test_fast_profile_name_uid_redirects_to_username_about(self, fetch_limited, load_accounts):
+        uid = "100037073983819"
+        username_url = "https://www.facebook.com/thanh.duyen.37570/"
+        load_accounts.return_value = [_cookie_account()]
+        fetch_limited.side_effect = [
+            _fetch_result(200, "<title>Facebook</title>", username_url, "ok"),
+            _fetch_result(
+                200,
+                '<meta property="og:title" content="Thanh Duyen">',
+                "https://www.facebook.com/thanh.duyen.37570/about",
+                "ok",
+            ),
+        ]
+
+        result = profile_name_lookup_module.resolve_profile_name(_resolved(uid=uid))
+
+        self.assertEqual(result.name, "Thanh Duyen")
+        self.assertEqual(result.source, "profile_name_fast_cookie")
+        self.assertEqual(result.reason, "name_found_login_next")
+        self.assertEqual(fetch_limited.call_count, 2)
+        self.assertEqual(fetch_limited.call_args_list[0].args[0], f"https://www.facebook.com/profile.php?id={uid}")
+        self.assertEqual(fetch_limited.call_args_list[1].args[0], "https://www.facebook.com/thanh.duyen.37570/about")
+
+    @patch("app_modules.features.profile_name_lookup.load_cookie_accounts")
+    @patch("app_modules.features.profile_name_lookup._fetch_limited_text")
+    def test_fast_choose_profile_name_does_not_fallback_to_uid(self, fetch_limited, load_accounts):
+        uid = "100037073983819"
+        load_accounts.return_value = [_cookie_account()]
+        fetch_limited.return_value = _fetch_result(
+            200,
+            "<title>Facebook</title>",
+            f"https://www.facebook.com/profile.php?id={uid}",
+            "ok",
+        )
+
+        name = profile_name_lookup_module.choose_profile_name(
+            _resolved(uid=uid),
+            _live_die("LIVE"),
+            include_name=True,
+        )
+
+        self.assertEqual(name, "")
+        self.assertNotEqual(name, uid)
 
 
 def _cookie_account(c_user="100000000000099"):
