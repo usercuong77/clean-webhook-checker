@@ -28,8 +28,8 @@ curl -X POST http://127.0.0.1:8091/ig/check-bulk `
 
 ## Render
 
-Use `render.yaml`. Chromium is installed during build with:
+Use `render.yaml`. System packages are listed in `Aptfile`; Chromium is installed during build with:
 
 ```bash
-python -m playwright install --with-deps chromium
+python -m playwright install chromium
 ```
