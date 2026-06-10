@@ -1,7 +1,8 @@
 services:
   - type: web
     name: instagram-checker-service
-    env: docker
+    runtime: python
     plan: free
-    dockerfilePath: ./Dockerfile
+    buildCommand: export PLAYWRIGHT_BROWSERS_PATH=0 && pip install -r requirements.txt && python -m playwright install chromium
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health

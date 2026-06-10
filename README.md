@@ -28,4 +28,4 @@ curl -X POST http://127.0.0.1:8091/ig/check-bulk `
 
 ## Render
 
-Use `render.yaml` with Docker. The service runs from the official Playwright Python image, so Chromium and OS deps are already included.
+Use `render.yaml` with the Python runtime. `PLAYWRIGHT_BROWSERS_PATH=0` keeps Chromium inside the project slug so it is available at runtime.

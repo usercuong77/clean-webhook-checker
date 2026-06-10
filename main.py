@@ -6,6 +6,9 @@ from typing import Any
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
+
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
+
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 
