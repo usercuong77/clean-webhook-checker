@@ -258,8 +258,8 @@ def _direct_profile_name_tds_deadline() -> float:
 
 
 def _profile_name_lookup_enabled() -> bool:
-    value = os.getenv("PROFILE_NAME_LOOKUP_ENABLED", "0").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    disabled = os.getenv("PROFILE_NAME_LOOKUP_DISABLED", "").strip().lower()
+    return disabled not in {"1", "true", "yes", "on"}
 
 
 def latest_post_input(req: LatestPostRequest) -> dict[str, Any]:
