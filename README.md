@@ -28,8 +28,4 @@ curl -X POST http://127.0.0.1:8091/ig/check-bulk `
 
 ## Render
 
-Use `render.yaml`. System packages are listed in `Aptfile`; Chromium is installed during build with:
-
-```bash
-python -m playwright install chromium
-```
+Use `render.yaml` with Docker. The service runs from the official Playwright Python image, so Chromium and OS deps are already included.
