@@ -80,7 +80,7 @@ def _classify(title: str, text: str) -> str:
 
 async def _route_light(route: Any) -> None:
     resource_type = route.request.resource_type
-    if resource_type in {"image", "media", "font"}:
+    if resource_type in {"image", "media", "font", "stylesheet"}:
         await route.abort()
         return
     await route.continue_()
@@ -150,7 +150,7 @@ async def _check_one(req: IgCheckRequest) -> dict[str, Any]:
         try:
             response = await page.goto(
                 f"https://www.instagram.com/{username}/",
-                wait_until="domcontentloaded",
+                wait_until="commit",
                 timeout=req.timeoutMs,
             )
             http_status = response.status if response is not None else 0
