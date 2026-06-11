@@ -108,8 +108,11 @@ async def _ensure_browser() -> BrowserContext:
             viewport={"width": 900, "height": 800},
         )
         await _context.route("**/*", _route_light)
-        concurrency = int(os.getenv("IG_CHECK_CONCURRENCY", "3") or "3")
-        _semaphore = asyncio.Semaphore(max(1, min(concurrency, 10)))
+        # Instagram sometimes returns an empty app shell under concurrent checks,
+        # which can look like an unavailable profile. Keep one page active per
+        # free instance and scale by adding instances instead.
+        concurrency = int(os.getenv("IG_CHECK_CONCURRENCY", "1") or "1")
+        _semaphore = asyncio.Semaphore(max(1, min(concurrency, 1)))
         return _context
 
 
