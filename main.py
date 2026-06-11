@@ -40,6 +40,7 @@ class IgCheckRequest(BaseModel):
     timeoutMs: int = Field(default=8000, ge=1500, le=15000)
     detectMs: int = Field(default=1800, ge=400, le=5000)
     useCookieFallback: bool = True
+    debug: bool = False
 
 
 class IgBulkRequest(BaseModel):
@@ -112,7 +113,7 @@ async def _ensure_browser() -> BrowserContext:
         return _context
 
 
-async def _detect(page: Page, detect_ms: int) -> tuple[str, str]:
+async def _detect(page: Page, detect_ms: int) -> tuple[str, str, str]:
     title = ""
     text = ""
     deadline = time.perf_counter() + (detect_ms / 1000)
@@ -125,9 +126,9 @@ async def _detect(page: Page, detect_ms: int) -> tuple[str, str]:
             continue
         status = _classify(title, text)
         if status != "UNKNOWN":
-            return status, title
+            return status, title, text
         await asyncio.sleep(0.05)
-    return _classify(title, text), title
+    return _classify(title, text), title, text
 
 
 async def _check_one(req: IgCheckRequest) -> dict[str, Any]:
@@ -153,8 +154,8 @@ async def _check_one(req: IgCheckRequest) -> dict[str, Any]:
                 timeout=req.timeoutMs,
             )
             http_status = response.status if response is not None else 0
-            status, title = await _detect(page, req.detectMs)
-            return {
+            status, title, text = await _detect(page, req.detectMs)
+            payload = {
                 "ok": status in {"LIVE", "DIE"},
                 "status": status,
                 "username": username,
@@ -165,6 +166,9 @@ async def _check_one(req: IgCheckRequest) -> dict[str, Any]:
                 "title": title,
                 "elapsedMs": int((time.perf_counter() - start) * 1000),
             }
+            if req.debug:
+                payload["textSnippet"] = re.sub(r"\s+", " ", text).strip()[:700]
+            return payload
         except Exception as exc:
             err = f"{type(exc).__name__}:{str(exc)[:160]}"
             return {
