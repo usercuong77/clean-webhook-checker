@@ -128,6 +128,8 @@ async def _detect(page: Page, detect_ms: int) -> tuple[str, str, str]:
         if status != "UNKNOWN":
             return status, title, text
         await asyncio.sleep(0.05)
+    if title.strip().lower() == "instagram" and not text.strip():
+        return "DIE", title, text
     return _classify(title, text), title, text
 
 
