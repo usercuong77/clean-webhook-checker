@@ -168,6 +168,11 @@ async def _check_one(req: IgCheckRequest) -> dict[str, Any]:
             }
             if req.debug:
                 payload["textSnippet"] = re.sub(r"\s+", " ", text).strip()[:700]
+                try:
+                    html = await page.content()
+                    payload["htmlSnippet"] = re.sub(r"\s+", " ", html).strip()[:700]
+                except Exception:
+                    payload["htmlSnippet"] = ""
             return payload
         except Exception as exc:
             err = f"{type(exc).__name__}:{str(exc)[:160]}"
