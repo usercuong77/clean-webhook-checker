@@ -507,7 +507,7 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
             and not public.verified_label
             and _profile_tick_should_cookie_fallback_for_uid(normalized, uid, username)
         ):
-            cookie = _resolve_profile_verified_with_cookie(
+            cookie = _resolve_profile_verified_cookie_fallback_with_name_context(
                 normalized=normalized,
                 uid=uid,
                 username=username,
@@ -527,7 +527,7 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
         username = _profile_tick_username_from_url(normalized) or username
         canonical_url = _canonical_profile_tick_url(normalized, uid)
 
-    return _resolve_profile_verified_with_cookie(
+    return _resolve_profile_verified_cookie_fallback_with_name_context(
         normalized=normalized,
         uid=uid,
         username=username,
@@ -551,6 +551,40 @@ def _profile_tick_uid_cookie_fallback_timeout() -> float:
     except ValueError:
         configured = 2.2
     return max(1.0, min(configured, 4.0))
+
+
+def _resolve_profile_verified_cookie_fallback_with_name_context(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+    forced: bool,
+) -> ProfileTickResult:
+    about_first = _profile_about_url(normalized) or normalized
+    result = _resolve_profile_tick_with_cookie(
+        normalized=about_first,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        timeout=timeout,
+        probes=probes,
+        forced=forced,
+    )
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label=result.verified_label,
+        uid=result.uid or uid,
+        username=result.username or username,
+        canonical_url=result.canonical_url or canonical_url,
+        source=result.source,
+        reason=result.reason,
+        http_code=result.http_code,
+        probes=result.probes,
+        used_cookie=result.used_cookie,
+    )
 
 
 def _retry_public_tick_for_verified(
@@ -947,7 +981,7 @@ def _resolve_profile_verified_with_cookie(
             continue
         probe_count = 0
         max_probes = _tick_only_cookie_max_probe_count(forced)
-        for url, headers, header_label in _cookie_verified_tick_probe_candidates(normalized, uid, username, account):
+        for url, headers, header_label in _cookie_tick_probe_candidates(normalized, uid, username, account):
             if probe_count >= max_probes:
                 break
             probe_count += 1
@@ -1089,14 +1123,6 @@ def _cookie_tick_probe_candidates(normalized: str, uid: str, username: str, acco
     urls = _fast_profile_tick_urls(normalized, uid, username)
     headers = _cookie_desktop_headers(account)
     return [(url, dict(headers), "desktop_logged_in") for url in urls]
-
-
-def _cookie_verified_tick_probe_candidates(normalized: str, uid: str, username: str, account) -> list[tuple[str, dict[str, str], str]]:
-    # Verified-only checks do not need profile content/name; /about exposes the badge
-    # earlier for many UID/profile.php links and keeps the fallback to one cheap probe.
-    urls = _lite_profile_tick_urls(normalized, uid, username)
-    headers = _cookie_desktop_headers(account)
-    return [(url, dict(headers), "desktop_logged_in_about_first") for url in urls]
 
 
 def _public_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
