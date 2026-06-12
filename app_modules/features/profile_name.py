@@ -877,6 +877,7 @@ def _resolve_profile_verified_lite_no_cookie(
             header_label=header_label,
             probes=probes,
             seen_unwrapped=seen_unwrapped,
+            allow_login_next_retry=False,
         )
         for result in results:
             if result.verified_label:
@@ -1431,6 +1432,7 @@ def _profile_verified_lite_results_from_candidate(
     header_label: str,
     probes: list[dict[str, Any]],
     seen_unwrapped: set[str] | None = None,
+    allow_login_next_retry: bool = True,
 ) -> list[ProfileTickResult]:
     fetch = _fetch_lite_text_until_verified(url, headers, timeout, max_bytes, raw_uid)
     result = _profile_verified_lite_result_from_fetch(
@@ -1444,6 +1446,9 @@ def _profile_verified_lite_results_from_candidate(
         probes=probes,
     )
     results = [result]
+
+    if not allow_login_next_retry:
+        return results
 
     target = _login_next_profile_target(fetch.final_url)
     if not target:
