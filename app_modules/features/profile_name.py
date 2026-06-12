@@ -860,7 +860,7 @@ def _resolve_profile_verified_lite_no_cookie(
     seen_unwrapped: set[str] = set()
     probe_count = 0
     max_probes = _tick_only_lite_public_max_probe_count()
-    for url, headers, header_label in _public_tick_probe_candidates(normalized, uid, username):
+    for url, headers, header_label in _public_tick_lite_probe_candidates(normalized, uid, username):
         if probe_count >= max_probes:
             break
         probe_count += 1
@@ -1040,6 +1040,19 @@ def _public_tick_probe_candidates(normalized: str, uid: str, username: str) -> l
     return out
 
 
+def _public_tick_lite_probe_candidates(normalized: str, uid: str, username: str) -> list[tuple[str, dict[str, str], str]]:
+    urls = _lite_profile_tick_urls(normalized, uid, username)
+    out: list[tuple[str, dict[str, str], str]] = []
+    seen: set[str] = set()
+    for url in urls:
+        key = f"facebookcatalog|{url}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((url, dict(_facebook_catalog_headers()), "facebookcatalog"))
+    return out
+
+
 def _cookie_tick_probe_candidates(normalized: str, uid: str, username: str, account) -> list[tuple[str, dict[str, str], str]]:
     urls = _fast_profile_tick_urls(normalized, uid, username)
     headers = _cookie_desktop_headers(account)
@@ -1096,6 +1109,34 @@ def _cookie_tick_read_cap_bytes(normalized: str, uid: str, username: str) -> int
 
 def _fast_profile_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
     return _profile_tick_urls(normalized, uid, username)[:2]
+
+
+def _lite_profile_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
+    urls: list[str] = []
+    if normalized:
+        urls.append(_profile_about_url(normalized))
+    if username:
+        safe_username = quote(username.strip("/"), safe=".")
+        urls.append(f"https://www.facebook.com/{safe_username}/about")
+    if uid:
+        urls.append(f"https://www.facebook.com/profile.php?id={uid}&sk=about")
+    if normalized:
+        urls.append(_profile_main_url(normalized))
+    return _unique([url for url in urls if url])
+
+
+def _lite_login_next_retry_urls(target: str, uid: str, username: str) -> list[str]:
+    urls: list[str] = []
+    if target:
+        urls.append(_profile_about_url(target))
+    if username:
+        safe_username = quote(username.strip("/"), safe=".")
+        urls.append(f"https://www.facebook.com/{safe_username}/about")
+    if uid:
+        urls.append(f"https://www.facebook.com/profile.php?id={uid}&sk=about")
+    if target:
+        urls.append(_profile_main_url(target))
+    return _unique([url for url in urls if url])
 
 
 def _profile_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
@@ -1410,7 +1451,7 @@ def _profile_verified_lite_results_from_candidate(
     seen = seen_unwrapped if seen_unwrapped is not None else set()
     retry_uid = raw_uid or extract_uid_from_url(target)
     retry_username = raw_username or _profile_tick_username_from_url(target)
-    retry_urls = _fast_profile_tick_urls(target, retry_uid, retry_username) or [target]
+    retry_urls = _lite_login_next_retry_urls(target, retry_uid, retry_username) or [target]
     for retry_url in retry_urls:
         key = f"{header_label}|{retry_url.lower()}"
         if key in seen:
