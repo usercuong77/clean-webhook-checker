@@ -125,6 +125,8 @@ TICK_PUBLIC_READ_CAP_BYTES = 1_800_000
 TICK_COOKIE_READ_CAP_BYTES = 950_000
 TICK_COOKIE_PROFILE_UID_READ_CAP_BYTES = 3_400_000
 TICK_COOKIE_DEEP_VERIFY_READ_CAP_BYTES = 3_600_000
+TICK_ONLY_PUBLIC_READ_CAP_BYTES = 900_000
+TICK_ONLY_COOKIE_READ_CAP_BYTES = 1_200_000
 PROFILE_TICK_VERIFIED_MARKERS = (
     "verified account",
     "tài khoản đã xác minh",
@@ -420,6 +422,106 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
     )
 
 
+def resolve_profile_verified_from_input(raw_input: str, force_cookie: bool = False) -> ProfileTickResult:
+    """Fast tick-only resolver.
+
+    This path intentionally does not extract or return profile names and does
+    not classify LIVE/DIE. It only answers whether verified markers are present.
+    The normal path stays public-only and fast; force_cookie enables the slower
+    deep check button.
+    """
+
+    value = str(raw_input or "").strip()
+    normalized = _normalize_profile_tick_input(value)
+    uid = normalize_uid(value) or extract_uid_from_url(normalized)
+    username = _profile_tick_username_from_url(normalized)
+    canonical_url = _canonical_profile_tick_url(normalized, uid)
+    probes: list[dict[str, Any]] = []
+    timeout = _profile_tick_request_timeout(force_cookie)
+
+    public = _resolve_profile_verified_no_cookie(
+        normalized=normalized,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        timeout=timeout,
+        probes=probes,
+    )
+    if public.verified_label:
+        return public
+    if _public_tick_miss_is_terminal(public):
+        return public
+    if not force_cookie:
+        return public
+
+    unwrapped = _first_login_next_target_from_probes(probes)
+    if unwrapped:
+        normalized = unwrapped
+        uid = extract_uid_from_url(normalized) or uid
+        username = _profile_tick_username_from_url(normalized) or username
+        canonical_url = _canonical_profile_tick_url(normalized, uid)
+
+    cookie = _resolve_profile_verified_with_cookie(
+        normalized=normalized,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        timeout=timeout,
+        probes=probes,
+        forced=force_cookie,
+    )
+    if cookie.verified_label or _profile_verified_result_has_profile(cookie) or cookie.used_cookie:
+        return cookie
+
+    return public
+
+
+def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool = False) -> ProfileTickResult:
+    """Ultra-fast verified-badge resolver.
+
+    This is intentionally narrower than resolve_profile_verified_from_input:
+    it only scans for verified markers, reads a smaller public HTML window,
+    and does not run profile/name visibility checks.  It is the default path
+    for /checktick; the older resolver remains available as a safer reference.
+    """
+
+    value = str(raw_input or "").strip()
+    normalized = _normalize_profile_tick_input(value)
+    uid = normalize_uid(value) or extract_uid_from_url(normalized)
+    username = _profile_tick_username_from_url(normalized)
+    canonical_url = _canonical_profile_tick_url(normalized, uid)
+    probes: list[dict[str, Any]] = []
+    timeout = _profile_tick_lite_request_timeout(force_cookie)
+
+    public = _resolve_profile_verified_lite_no_cookie(
+        normalized=normalized,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        timeout=timeout,
+        probes=probes,
+    )
+    if public.verified_label or _public_tick_miss_is_terminal(public) or not force_cookie:
+        return public
+
+    unwrapped = _first_login_next_target_from_probes(probes)
+    if unwrapped:
+        normalized = unwrapped
+        uid = extract_uid_from_url(normalized) or uid
+        username = _profile_tick_username_from_url(normalized) or username
+        canonical_url = _canonical_profile_tick_url(normalized, uid)
+
+    return _resolve_profile_verified_with_cookie(
+        normalized=normalized,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        timeout=_profile_tick_request_timeout(True),
+        probes=probes,
+        forced=force_cookie,
+    )
+
+
 def _retry_public_tick_for_verified(
     normalized: str,
     uid: str,
@@ -696,6 +798,164 @@ def _resolve_profile_tick_with_cookie(
     )
 
 
+def _resolve_profile_verified_no_cookie(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+) -> ProfileTickResult:
+    seen_unwrapped: set[str] = set()
+    probe_count = 0
+    max_probes = _tick_only_public_max_probe_count()
+    for url, headers, header_label in _public_tick_probe_candidates(normalized, uid, username):
+        if probe_count >= max_probes:
+            break
+        probe_count += 1
+        results = _profile_verified_results_from_candidate(
+            url=url,
+            headers=headers,
+            timeout=timeout,
+            max_bytes=_tick_only_public_read_cap_bytes(),
+            raw_uid=uid,
+            raw_username=username,
+            fallback_canonical_url=canonical_url,
+            source="profile_tick_no_cookie",
+            reason_prefix="no_cookie",
+            header_label=header_label,
+            used_cookie=False,
+            probes=probes,
+            seen_unwrapped=seen_unwrapped,
+        )
+        for result in results:
+            if result.verified_label:
+                return result
+            if _public_tick_miss_is_terminal(result):
+                return result
+
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label="",
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source="profile_tick_no_cookie",
+        reason="no_cookie_verified_not_found",
+        http_code=_last_probe_http_code(probes),
+        probes=probes,
+        used_cookie=False,
+    )
+
+
+def _resolve_profile_verified_lite_no_cookie(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+) -> ProfileTickResult:
+    seen_unwrapped: set[str] = set()
+    probe_count = 0
+    max_probes = _tick_only_lite_public_max_probe_count()
+    for url, headers, header_label in _public_tick_probe_candidates(normalized, uid, username):
+        if probe_count >= max_probes:
+            break
+        probe_count += 1
+        results = _profile_verified_lite_results_from_candidate(
+            url=url,
+            headers=headers,
+            timeout=timeout,
+            max_bytes=_tick_only_lite_public_read_cap_bytes(),
+            raw_uid=uid,
+            raw_username=username,
+            fallback_canonical_url=canonical_url,
+            source="profile_tick_lite_no_cookie",
+            reason_prefix="lite_no_cookie",
+            header_label=header_label,
+            probes=probes,
+            seen_unwrapped=seen_unwrapped,
+        )
+        for result in results:
+            if result.verified_label:
+                return result
+            if _public_tick_miss_is_terminal(result):
+                return result
+
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label="",
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source="profile_tick_lite_no_cookie",
+        reason="lite_no_cookie_verified_not_found",
+        http_code=_last_probe_http_code(probes),
+        probes=probes,
+        used_cookie=False,
+    )
+
+
+def _resolve_profile_verified_with_cookie(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+    forced: bool,
+) -> ProfileTickResult:
+    seen_unwrapped: set[str] = set()
+    accounts = load_cookie_accounts()[:_tick_cookie_account_limit(forced)]
+    for account in accounts:
+        if not account.is_usable:
+            continue
+        probe_count = 0
+        max_probes = _tick_only_cookie_max_probe_count(forced)
+        for url, headers, header_label in _cookie_tick_probe_candidates(normalized, uid, username, account):
+            if probe_count >= max_probes:
+                break
+            probe_count += 1
+            results = _profile_verified_results_from_candidate(
+                url=url,
+                headers=headers,
+                timeout=timeout,
+                max_bytes=_tick_only_cookie_read_cap_bytes(),
+                raw_uid=uid,
+                raw_username=username,
+                fallback_canonical_url=canonical_url,
+                source="profile_tick_cookie",
+                reason_prefix="cookie_forced" if forced else "cookie_fallback",
+                header_label=header_label,
+                used_cookie=True,
+                probes=probes,
+                cookie_account=account.masked_id,
+                seen_unwrapped=seen_unwrapped,
+            )
+            for result in results:
+                if result.verified_label:
+                    return result
+        if not forced:
+            break
+
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label="",
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source="profile_tick_cookie",
+        reason="cookie_verified_not_found" if forced else "no_cookie_and_cookie_verified_not_found",
+        http_code=_last_probe_http_code(probes),
+        probes=probes,
+        used_cookie=True,
+    )
+
+
 def _resolve_profile_tick_cookie_deep_verify(
     normalized: str,
     uid: str,
@@ -940,6 +1200,53 @@ def _profile_tick_result_from_fetch(
     )
 
 
+def _profile_verified_result_from_fetch(
+    fetch: FetchResult,
+    raw_uid: str,
+    raw_username: str,
+    fallback_canonical_url: str,
+    source: str,
+    reason_prefix: str,
+    header_label: str,
+    used_cookie: bool,
+    probes: list[dict[str, Any]],
+    cookie_account: str = "",
+) -> ProfileTickResult:
+    uid = raw_uid or extract_uid_from_url(fetch.final_url)
+    username = raw_username or _profile_tick_username_from_url(fetch.final_url)
+    canonical_url = _canonical_profile_tick_url(fetch.final_url or fallback_canonical_url, uid)
+    verified_label = extract_profile_verified_label(fetch.text, "", uid)
+    profile_seen = _profile_verified_profile_seen(fetch, uid, username, verified_label)
+    reason = _profile_verified_reason(reason_prefix, verified_label, profile_seen, fetch)
+    probe = _probe_record(
+        source,
+        canonical_url,
+        fetch,
+        "",
+        cookie_account=cookie_account,
+        reason=reason,
+        header_label=header_label,
+        verified_label=verified_label,
+    )
+    probe["usedCookie"] = used_cookie
+    probe["profileSeen"] = profile_seen
+    probes.append(probe)
+
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label=verified_label,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source=source,
+        reason=reason,
+        http_code=fetch.http_code,
+        probes=probes,
+        used_cookie=used_cookie,
+    )
+
+
 def _profile_tick_results_from_candidate(
     url: str,
     headers: Mapping[str, str],
@@ -1003,6 +1310,177 @@ def _profile_tick_results_from_candidate(
         if result.verified_label:
             return results
     return results
+
+
+def _profile_verified_results_from_candidate(
+    url: str,
+    headers: Mapping[str, str],
+    timeout: float,
+    max_bytes: int,
+    raw_uid: str,
+    raw_username: str,
+    fallback_canonical_url: str,
+    source: str,
+    reason_prefix: str,
+    header_label: str,
+    used_cookie: bool,
+    probes: list[dict[str, Any]],
+    cookie_account: str = "",
+    seen_unwrapped: set[str] | None = None,
+) -> list[ProfileTickResult]:
+    fetch = _fetch_limited_text(url, headers, timeout, max_bytes)
+    results = [
+        _profile_verified_result_from_fetch(
+            fetch=fetch,
+            raw_uid=raw_uid,
+            raw_username=raw_username,
+            fallback_canonical_url=fallback_canonical_url,
+            source=source,
+            reason_prefix=reason_prefix,
+            header_label=header_label,
+            used_cookie=used_cookie,
+            probes=probes,
+            cookie_account=cookie_account,
+        )
+    ]
+
+    target = _login_next_profile_target(fetch.final_url)
+    if not target:
+        return results
+    seen = seen_unwrapped if seen_unwrapped is not None else set()
+    retry_uid = raw_uid or extract_uid_from_url(target)
+    retry_username = raw_username or _profile_tick_username_from_url(target)
+    retry_urls = _fast_profile_tick_urls(target, retry_uid, retry_username) or [target]
+    for retry_url in retry_urls:
+        key = f"{header_label}|{retry_url.lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        retry_fetch = _fetch_limited_text(url=retry_url, headers=headers, timeout=timeout, max_bytes=max_bytes)
+        result = _profile_verified_result_from_fetch(
+            fetch=retry_fetch,
+            raw_uid=retry_uid,
+            raw_username=retry_username,
+            fallback_canonical_url=retry_url,
+            source=source,
+            reason_prefix=f"{reason_prefix}_login_next",
+            header_label=header_label,
+            used_cookie=used_cookie,
+            probes=probes,
+            cookie_account=cookie_account,
+        )
+        results.append(result)
+        probes[-1]["loginNextTarget"] = target
+        if result.verified_label:
+            return results
+    return results
+
+
+def _profile_verified_lite_results_from_candidate(
+    url: str,
+    headers: Mapping[str, str],
+    timeout: float,
+    max_bytes: int,
+    raw_uid: str,
+    raw_username: str,
+    fallback_canonical_url: str,
+    source: str,
+    reason_prefix: str,
+    header_label: str,
+    probes: list[dict[str, Any]],
+    seen_unwrapped: set[str] | None = None,
+) -> list[ProfileTickResult]:
+    fetch = _fetch_lite_text_until_verified(url, headers, timeout, max_bytes, raw_uid)
+    result = _profile_verified_lite_result_from_fetch(
+        fetch=fetch,
+        raw_uid=raw_uid,
+        raw_username=raw_username,
+        fallback_canonical_url=fallback_canonical_url,
+        source=source,
+        reason_prefix=reason_prefix,
+        header_label=header_label,
+        probes=probes,
+    )
+    results = [result]
+
+    target = _login_next_profile_target(fetch.final_url)
+    if not target:
+        return results
+    seen = seen_unwrapped if seen_unwrapped is not None else set()
+    retry_uid = raw_uid or extract_uid_from_url(target)
+    retry_username = raw_username or _profile_tick_username_from_url(target)
+    retry_urls = _fast_profile_tick_urls(target, retry_uid, retry_username) or [target]
+    for retry_url in retry_urls:
+        key = f"{header_label}|{retry_url.lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        retry_fetch = _fetch_lite_text_until_verified(
+            url=retry_url,
+            headers=headers,
+            timeout=timeout,
+            max_bytes=max_bytes,
+            profile_uid=retry_uid,
+        )
+        result = _profile_verified_lite_result_from_fetch(
+            fetch=retry_fetch,
+            raw_uid=retry_uid,
+            raw_username=retry_username,
+            fallback_canonical_url=retry_url,
+            source=source,
+            reason_prefix=f"{reason_prefix}_login_next",
+            header_label=header_label,
+            probes=probes,
+        )
+        results.append(result)
+        probes[-1]["loginNextTarget"] = target
+        if result.verified_label:
+            return results
+    return results
+
+
+def _profile_verified_lite_result_from_fetch(
+    fetch: FetchResult,
+    raw_uid: str,
+    raw_username: str,
+    fallback_canonical_url: str,
+    source: str,
+    reason_prefix: str,
+    header_label: str,
+    probes: list[dict[str, Any]],
+) -> ProfileTickResult:
+    uid = raw_uid or extract_uid_from_url(fetch.final_url)
+    username = raw_username or _profile_tick_username_from_url(fetch.final_url)
+    canonical_url = _canonical_profile_tick_url(fetch.final_url or fallback_canonical_url, uid)
+    verified_label = extract_profile_verified_label(fetch.text, "", uid)
+    reason = _profile_verified_lite_reason(reason_prefix, verified_label, fetch)
+    probe = _probe_record(
+        source,
+        canonical_url,
+        fetch,
+        "",
+        reason=reason,
+        header_label=header_label,
+        verified_label=verified_label,
+    )
+    probe["usedCookie"] = False
+    probes.append(probe)
+
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label=verified_label,
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source=source,
+        reason=reason,
+        http_code=fetch.http_code,
+        probes=probes,
+        used_cookie=False,
+    )
 
 
 def _first_login_next_target_from_probes(probes: list[dict[str, Any]]) -> str:
@@ -1442,6 +1920,56 @@ def _fetch_limited_text(url: str, headers: Mapping[str, str], timeout: float, ma
         )
 
 
+def _fetch_lite_text_until_verified(
+    url: str,
+    headers: Mapping[str, str],
+    timeout: float,
+    max_bytes: int,
+    profile_uid: str = "",
+) -> FetchResult:
+    try:
+        with requests.get(
+            url,
+            headers=dict(headers),
+            timeout=_requests_timeout(timeout),
+            allow_redirects=True,
+            stream=True,
+        ) as response:
+            text = ""
+            total = 0
+            encoding = response.encoding or "utf-8"
+            chunk_size = _tick_lite_stream_chunk_size()
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                text += chunk.decode(encoding, errors="ignore")
+                if _text_has_verified_hint(text) and extract_profile_verified_label(text, "", profile_uid):
+                    break
+                if total >= max_bytes:
+                    break
+            return FetchResult(
+                http_code=response.status_code,
+                text=text,
+                final_url=response.url or url,
+                reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
+            )
+    except requests.RequestException as exc:
+        return FetchResult(
+            http_code=0,
+            text="",
+            final_url=url,
+            reason=f"request_error:{type(exc).__name__}",
+        )
+
+
+def _text_has_verified_hint(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered:
+        return False
+    return any(marker.lower() in lowered for marker in PROFILE_TICK_VERIFIED_MARKERS)
+
+
 def _probe_record(
     source: str,
     url: str,
@@ -1482,6 +2010,37 @@ def _profile_tick_reason(reason_prefix: str, name: str, verified_label: str, fet
     return f"{reason_prefix}_{fetch.reason or 'not_found'}"
 
 
+def _profile_verified_reason(
+    reason_prefix: str,
+    verified_label: str,
+    profile_seen: bool,
+    fetch: FetchResult,
+) -> str:
+    if verified_label:
+        return f"{reason_prefix}_verified_found"
+    if profile_seen:
+        return f"{reason_prefix}_profile_seen_not_verified"
+    unavailable_reason = _profile_tick_unavailable_reason(fetch)
+    if unavailable_reason:
+        return f"{reason_prefix}_{unavailable_reason}"
+    auth_wall_reason = _profile_tick_auth_wall_reason(fetch)
+    if auth_wall_reason:
+        return f"{reason_prefix}_{auth_wall_reason}"
+    return f"{reason_prefix}_{fetch.reason or 'not_found'}"
+
+
+def _profile_verified_lite_reason(reason_prefix: str, verified_label: str, fetch: FetchResult) -> str:
+    if verified_label:
+        return f"{reason_prefix}_verified_found"
+    unavailable_reason = _profile_tick_unavailable_reason(fetch)
+    if unavailable_reason:
+        return f"{reason_prefix}_{unavailable_reason}"
+    auth_wall_reason = _profile_tick_auth_wall_reason(fetch)
+    if auth_wall_reason:
+        return f"{reason_prefix}_{auth_wall_reason}"
+    return f"{reason_prefix}_{fetch.reason or 'verified_not_found'}"
+
+
 def _profile_tick_request_timeout(force_cookie: bool) -> float:
     env_key = "PROFILE_TICK_FORCE_COOKIE_TIMEOUT_SEC" if force_cookie else "PROFILE_TICK_TIMEOUT_SEC"
     default_value = 4.0 if force_cookie else 2.5
@@ -1490,6 +2049,16 @@ def _profile_tick_request_timeout(force_cookie: bool) -> float:
     except ValueError:
         configured = default_value
     return max(1.0, min(configured, 6.0 if force_cookie else 4.0))
+
+
+def _profile_tick_lite_request_timeout(force_cookie: bool) -> float:
+    if force_cookie:
+        return _profile_tick_request_timeout(True)
+    try:
+        configured = float(os.getenv("PROFILE_TICK_LITE_TIMEOUT_SEC", "1.8"))
+    except ValueError:
+        configured = 1.8
+    return max(0.7, min(configured, 3.0))
 
 
 def _requests_timeout(timeout: float) -> tuple[float, float]:
@@ -1515,6 +2084,11 @@ def _public_tick_miss_is_terminal(result: ProfileTickResult) -> bool:
     )
 
 
+def _profile_verified_result_has_profile(result: ProfileTickResult) -> bool:
+    reason = str(result.reason or "").lower()
+    return bool(result.verified_label) or "profile_seen_not_verified" in reason
+
+
 def _profile_tick_unavailable_reason(fetch: FetchResult) -> str:
     if fetch.http_code == 404:
         return "http_404"
@@ -1528,6 +2102,97 @@ def _profile_tick_unavailable_reason(fetch: FetchResult) -> str:
     if "nội dung này hiện không hiển thị" in text or "trang này không hiển thị" in text:
         return "content_unavailable"
     return ""
+
+
+def _profile_tick_auth_wall_reason(fetch: FetchResult) -> str:
+    text = f"{fetch.final_url}\n{fetch.text[:160000]}".lower()
+    if "/login" in text or "log in to facebook" in text or "log in or sign up to view" in text:
+        return "auth_wall"
+    if "checkpoint" in text or "security check" in text:
+        return "auth_wall"
+    return ""
+
+
+def _profile_verified_profile_seen(fetch: FetchResult, uid: str, username: str, verified_label: str) -> bool:
+    if verified_label:
+        return True
+    if _profile_tick_unavailable_reason(fetch):
+        return False
+    if int(fetch.http_code or 0) < 200 or int(fetch.http_code or 0) >= 400:
+        return False
+
+    header = str(fetch.text or "")[:500000]
+    lowered = header.lower()
+
+    if uid and str(uid) in header:
+        return True
+
+    for candidate in _extract_og_title_candidates(header[:220000]):
+        if is_valid_profile_name(candidate):
+            return True
+
+    title_match = TITLE_RE.search(header[:220000])
+    if title_match and is_valid_profile_name(_text_from_html(title_match.group(1))):
+        return True
+
+    return False
+
+
+def _tick_only_public_read_cap_bytes() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_ONLY_PUBLIC_READ_CAP_BYTES", str(TICK_ONLY_PUBLIC_READ_CAP_BYTES)))
+    except ValueError:
+        configured = TICK_ONLY_PUBLIC_READ_CAP_BYTES
+    return max(160_000, min(configured, 1_800_000))
+
+
+def _tick_only_cookie_read_cap_bytes() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_ONLY_COOKIE_READ_CAP_BYTES", str(TICK_ONLY_COOKIE_READ_CAP_BYTES)))
+    except ValueError:
+        configured = TICK_ONLY_COOKIE_READ_CAP_BYTES
+    return max(250_000, min(configured, 2_500_000))
+
+
+def _tick_only_lite_public_read_cap_bytes() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_LITE_PUBLIC_READ_CAP_BYTES", "500000"))
+    except ValueError:
+        configured = 500_000
+    return max(350_000, min(configured, 900_000))
+
+
+def _tick_only_public_max_probe_count() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_ONLY_PUBLIC_MAX_PROBES", "1"))
+    except ValueError:
+        configured = 1
+    return max(1, min(configured, 8))
+
+
+def _tick_only_lite_public_max_probe_count() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_LITE_PUBLIC_MAX_PROBES", "1"))
+    except ValueError:
+        configured = 1
+    return max(1, min(configured, 4))
+
+
+def _tick_lite_stream_chunk_size() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_LITE_STREAM_CHUNK_BYTES", "16384"))
+    except ValueError:
+        configured = 16_384
+    return max(8_192, min(configured, 131_072))
+
+
+def _tick_only_cookie_max_probe_count(forced: bool) -> int:
+    default = 6 if forced else 2
+    try:
+        configured = int(os.getenv("PROFILE_TICK_ONLY_COOKIE_MAX_PROBES", str(default)))
+    except ValueError:
+        configured = default
+    return max(1, min(configured, 12))
 
 
 def _last_probe_http_code(probes: list[dict[str, Any]]) -> int:

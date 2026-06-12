@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from time import perf_counter
 import os
 from typing import Any, Literal
@@ -9,13 +10,17 @@ from app_modules.checkers.live_die import check_live_die
 from app_modules.core.config import get_config
 from app_modules.features.cookie_status import get_cookie_status
 from app_modules.features.latest_post import get_latest_post, get_latest_post_direct_from_input, sanitize_latest_post_input
-from app_modules.features.profile_name import resolve_profile_tick_from_input
+from app_modules.features.profile_name import (
+    resolve_profile_tick_from_input,
+    resolve_profile_verified_from_input,
+    resolve_profile_verified_lite_from_input,
+)
 from app_modules.features.profile_name_lookup import choose_profile_name
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
 from app_modules.resolvers.facebook_cookies import reload_cookie_accounts_cache
 from app_modules.resolvers import facebook_uid_resolver
 from app_modules.resolvers.fb_uid_lite_adapter import resolve_uid_with_lite_many
-from app_modules.resolvers.tds_uid_resolver import resolve_uid_with_tds_api
+from app_modules.resolvers.tds_uid_resolver import TdsUidResolution, resolve_uid_with_tds_api
 from app_modules.resolvers.uid_resolver import ResolvedInput
 from app_modules.resolvers.uid_resolver import resolve_input
 
@@ -52,6 +57,12 @@ class RealtimeBulkJob(BaseModel):
 
 class RealtimeBulkRequest(BaseModel):
     jobs: list[RealtimeBulkJob] = Field(default_factory=list)
+
+
+class UidResolverCompareRequest(BaseModel):
+    input: str = Field(default="")
+    inputs: list[str] = Field(default_factory=list)
+    includeRaw: bool = Field(default=False)
 
 
 class UidResolveFastRequest(BaseModel):
@@ -132,6 +143,73 @@ def check_input(req: CheckRequest) -> dict[str, Any]:
         "elapsedMs": elapsed_ms,
         "probes": live_die.probes,
         "resolverDebug": _resolver_debug_summary(resolved),
+    }
+
+
+async def uid_resolver_compare_input(req: UidResolverCompareRequest) -> dict[str, Any]:
+    started = perf_counter()
+    inputs = _compare_inputs(req)
+    lite_results = await resolve_uid_with_lite_many(inputs)
+    rows: list[dict[str, Any]] = []
+
+    for raw_input, lite in zip(inputs, lite_results):
+        internal_started = perf_counter()
+        with _tds_disabled_for_internal_compare():
+            internal = facebook_uid_resolver.resolve_uid_from_any_input(raw_input)
+        internal_elapsed = int((perf_counter() - internal_started) * 1000)
+
+        tds_started = perf_counter()
+        tds = resolve_uid_with_tds_api(
+            raw_input,
+            timeout=_compare_tds_timeout(),
+            deadline=_compare_tds_deadline(),
+        )
+        tds_elapsed = int((perf_counter() - tds_started) * 1000)
+
+        row = {
+            "input": raw_input,
+            "lite": {
+                "ok": bool(lite.uid),
+                "uid": lite.uid,
+                "source": lite.source,
+                "reason": lite.reason,
+                "score": lite.score,
+                "elapsedMs": lite.elapsed_ms,
+            },
+            "internalNoTds": {
+                "ok": bool(internal.uid),
+                "uid": internal.uid,
+                "username": internal.username,
+                "source": internal.source,
+                "reason": internal.reason,
+                "elapsedMs": internal_elapsed,
+                "probeCount": len(
+                    getattr(internal, "probes", None)
+                    or getattr(internal, "resolver_probes", None)
+                    or []
+                ),
+            },
+            "tds": {
+                "ok": bool(tds.uid),
+                "uid": tds.uid,
+                "name": tds.name,
+                "source": tds.source,
+                "reason": tds.reason,
+                "httpCode": tds.http_code,
+                "elapsedMs": tds_elapsed,
+            },
+        }
+        if req.includeRaw:
+            row["lite"]["raw"] = lite.raw
+            row["tds"]["raw"] = tds.raw
+        rows.append(row)
+
+    return {
+        "ok": True,
+        "source": "uid_resolver_compare",
+        "elapsedMs": int((perf_counter() - started) * 1000),
+        "count": len(rows),
+        "results": rows,
     }
 
 
@@ -251,17 +329,27 @@ def _uid_resolve_fast_tds_deadline() -> float:
 
 
 def check_name_input(req: CheckRequest) -> dict[str, Any]:
-    return check_tick_input(req)
+    return _check_profile_tick_input(req, include_name=True)
 
 
 def check_tick_input(req: CheckRequest) -> dict[str, Any]:
+    return _check_profile_tick_input(req, include_name=bool(req.includeName))
+
+
+def _check_profile_tick_input(req: CheckRequest, include_name: bool) -> dict[str, Any]:
     started = perf_counter()
     raw_input = (req.input or "").strip()
-    tick = resolve_profile_tick_from_input(raw_input, force_cookie=bool(req.forceCookie))
+    if include_name:
+        tick = resolve_profile_tick_from_input(raw_input, force_cookie=bool(req.forceCookie))
+    else:
+        tick = resolve_profile_verified_lite_from_input(raw_input, force_cookie=bool(req.forceCookie))
     name = tick.name
     verified_label = tick.verified_label or _verified_account_label(name)
-    status: Status = _profile_tick_status(name, verified_label, tick.reason, tick.http_code)
-    status = _profile_tick_status_with_uid(raw_input, tick, status)
+    if include_name:
+        status: Status = _profile_tick_status(name, verified_label, tick.reason, tick.http_code)
+        status = _profile_tick_status_with_uid(raw_input, tick, status)
+    else:
+        status = "LIVE" if verified_label else "UNKNOWN"
     elapsed_ms = int((perf_counter() - started) * 1000)
     return {
         "ok": True,
@@ -293,6 +381,8 @@ def _profile_tick_status(name: str, verified_label: str, reason: str, http_code:
     if name or verified_label:
         return "LIVE"
     normalized_reason = str(reason or "").lower()
+    if "profile_seen_not_verified" in normalized_reason:
+        return "LIVE"
     terminal_reasons = (
         "content_unavailable",
         "page_not_found",
@@ -335,6 +425,8 @@ def _profile_tick_name_miss_is_die(reason: str, http_code: int) -> bool:
         for marker in (
             "no_cookie_and_cookie_name_not_found",
             "cookie_name_and_verified_not_found",
+            "no_cookie_and_cookie_verified_not_found",
+            "cookie_verified_not_found",
         )
     )
 
@@ -376,6 +468,58 @@ def _direct_profile_name_tds_deadline() -> float:
         return max(1.0, min(float(os.getenv("CHECK_DIRECT_PROFILE_NAME_TDS_DEADLINE_SEC", "8")), 12.0))
     except ValueError:
         return 8.0
+
+
+def _compare_inputs(req: UidResolverCompareRequest) -> list[str]:
+    candidates = list(req.inputs or [])
+    if req.input:
+        candidates.insert(0, req.input)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out[:20]
+
+
+def _compare_tds_timeout() -> float:
+    try:
+        return max(0.5, min(float(os.getenv("UID_COMPARE_TDS_TIMEOUT_SEC", "5")), 8.0))
+    except ValueError:
+        return 5.0
+
+
+def _compare_tds_deadline() -> float:
+    try:
+        return max(0.5, min(float(os.getenv("UID_COMPARE_TDS_DEADLINE_SEC", "8")), 12.0))
+    except ValueError:
+        return 8.0
+
+
+@contextmanager
+def _tds_disabled_for_internal_compare():
+    original = facebook_uid_resolver.resolve_uid_with_tds_api
+
+    def fake_tds(*_args, **_kwargs):
+        return TdsUidResolution(
+            uid="",
+            name="",
+            source="tds_uid_api",
+            reason="tds_api_unavailable_after_deadline",
+            http_code=0,
+            elapsed_ms=0,
+            raw={},
+        )
+
+    facebook_uid_resolver.resolve_uid_with_tds_api = fake_tds
+    try:
+        yield
+    finally:
+        facebook_uid_resolver.resolve_uid_with_tds_api = original
 
 
 def _profile_name_lookup_enabled() -> bool:
