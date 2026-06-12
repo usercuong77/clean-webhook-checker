@@ -1235,7 +1235,10 @@ def _profile_about_url(url: str) -> str:
     parsed = urlparse(value)
     if (parsed.path or "").lower().rstrip("/").endswith("/about"):
         return value
-    if "profile.php" in value:
+    if "profile.php" in (parsed.path or "").lower():
+        query = parse_qs(parsed.query)
+        if any(str(item).lower() == "about" for item in query.get("sk", [])):
+            return value
         separator = "&" if "?" in value else "?"
         return f"{value}{separator}sk=about"
     if "/share/" in value.lower():
