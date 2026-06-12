@@ -507,14 +507,13 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
             and not public.verified_label
             and _profile_tick_should_cookie_fallback_for_uid(normalized, uid, username)
         ):
-            cookie = _resolve_profile_verified_cookie_fallback_with_name_context(
+            cookie = _resolve_profile_verified_uid_cookie_quick_context(
                 normalized=normalized,
                 uid=uid,
                 username=username,
                 canonical_url=canonical_url,
                 timeout=_profile_tick_uid_cookie_fallback_timeout(),
                 probes=probes,
-                forced=False,
             )
             if cookie.verified_label:
                 return cookie
@@ -584,6 +583,62 @@ def _resolve_profile_verified_cookie_fallback_with_name_context(
         http_code=result.http_code,
         probes=result.probes,
         used_cookie=result.used_cookie,
+    )
+
+
+def _resolve_profile_verified_uid_cookie_quick_context(
+    normalized: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    timeout: float,
+    probes: list[dict[str, Any]],
+) -> ProfileTickResult:
+    account = next((item for item in load_cookie_accounts()[:1] if item.is_usable), None)
+    if account is None:
+        return ProfileTickResult(
+            name="",
+            display_name="",
+            verified_label="",
+            uid=uid,
+            username=username,
+            canonical_url=canonical_url,
+            source="profile_tick_cookie",
+            reason="cookie_unavailable",
+            http_code=_last_probe_http_code(probes),
+            probes=probes,
+            used_cookie=True,
+        )
+
+    url = _profile_main_url(normalized) or canonical_url or normalized
+    results = _profile_tick_results_from_candidate(
+        url=url,
+        headers=_cookie_desktop_headers(account),
+        timeout=timeout,
+        max_bytes=_cookie_tick_read_cap_bytes(normalized, uid, username),
+        raw_uid=uid,
+        raw_username=username,
+        fallback_canonical_url=canonical_url,
+        source="profile_tick_cookie",
+        reason_prefix="cookie_fallback_quick",
+        header_label="desktop_logged_in_quick",
+        used_cookie=True,
+        probes=probes,
+        cookie_account=account.masked_id,
+        seen_unwrapped=set(),
+    )[0]
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label=results.verified_label,
+        uid=results.uid or uid,
+        username=results.username or username,
+        canonical_url=results.canonical_url or canonical_url,
+        source=results.source,
+        reason=results.reason,
+        http_code=results.http_code,
+        probes=results.probes,
+        used_cookie=results.used_cookie,
     )
 
 
