@@ -849,6 +849,61 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(load_accounts.call_count, 0)
         self.assertEqual(cookie_candidates.call_count, 0)
 
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_lite_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    @patch("app_modules.features.profile_name._fetch_lite_text_until_verified")
+    def test_checktick_lite_no_cookie_unknown_falls_back_to_cookie(
+        self,
+        fetch_lite,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        uid = "5"
+        load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [(f"https://www.facebook.com/profile.php?id={uid}&sk=about", {}, "public")]
+        cookie_candidates.return_value = [(f"https://www.facebook.com/profile.php?id={uid}", {}, "cookie")]
+        fetch_lite.return_value = _fetch_result(
+            200,
+            "<title>Facebook</title><body>Log in to Facebook</body>",
+            f"https://www.facebook.com/profile.php?id={uid}&sk=about",
+            "ok",
+        )
+        fetch_limited.return_value = _fetch_result(
+            200,
+            f'ProfileCometHeader {uid} "is_verified":true',
+            f"https://www.facebook.com/profile.php?id={uid}",
+            "ok",
+        )
+
+        result = check_tick_input(CheckRequest(input=f"https://www.facebook.com/{uid}", mode="1", includeName=False))
+
+        self.assertEqual(result["status"], "LIVE")
+        self.assertTrue(result["verified"])
+        self.assertTrue(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "cookie")
+        self.assertEqual(fetch_lite.call_count, 1)
+        self.assertEqual(fetch_limited.call_count, 1)
+        self.assertEqual(load_accounts.call_count, 1)
+        self.assertEqual(cookie_candidates.call_count, 1)
+
+    def test_cookie_tick_candidates_prefer_uid_profile_url(self):
+        account = _cookie_account()
+
+        candidates = profile_name_module._cookie_tick_probe_candidates(
+            "https://www.facebook.com/5",
+            "5",
+            "5",
+            account,
+        )
+
+        self.assertGreaterEqual(len(candidates), 2)
+        self.assertEqual(candidates[0][0], "https://www.facebook.com/profile.php?id=5")
+        self.assertEqual(candidates[1][0], "https://www.facebook.com/profile.php?id=5&sk=about")
+
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
     def test_checktick_force_cookie_skips_no_cookie(self, fetch_limited, load_accounts):

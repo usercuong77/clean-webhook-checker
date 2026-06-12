@@ -501,22 +501,7 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
         timeout=timeout,
         probes=probes,
     )
-    if public.verified_label or _public_tick_miss_is_terminal(public) or not force_cookie:
-        if (
-            not force_cookie
-            and not public.verified_label
-            and _profile_tick_should_cookie_fallback_for_uid(normalized, uid, username)
-        ):
-            cookie = _resolve_profile_verified_uid_cookie_quick_context(
-                normalized=normalized,
-                uid=uid,
-                username=username,
-                canonical_url=canonical_url,
-                timeout=_profile_tick_uid_cookie_fallback_timeout(),
-                probes=probes,
-            )
-            if cookie.verified_label:
-                return cookie
+    if public.verified_label or _public_tick_miss_is_terminal(public):
         return public
 
     unwrapped = _first_login_next_target_from_probes(probes)
@@ -525,6 +510,20 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
         uid = extract_uid_from_url(normalized) or uid
         username = _profile_tick_username_from_url(normalized) or username
         canonical_url = _canonical_profile_tick_url(normalized, uid)
+
+    if not force_cookie:
+        cookie = _resolve_profile_verified_cookie_fallback_with_name_context(
+            normalized=normalized,
+            uid=uid,
+            username=username,
+            canonical_url=canonical_url,
+            timeout=_profile_tick_uid_cookie_fallback_timeout(),
+            probes=probes,
+            forced=False,
+        )
+        if cookie.verified_label or _profile_verified_result_has_profile(cookie) or cookie.used_cookie:
+            return cookie
+        return public
 
     return _resolve_profile_verified_cookie_fallback_with_name_context(
         normalized=normalized,
@@ -1175,7 +1174,16 @@ def _public_tick_lite_probe_candidates(normalized: str, uid: str, username: str)
 
 
 def _cookie_tick_probe_candidates(normalized: str, uid: str, username: str, account) -> list[tuple[str, dict[str, str], str]]:
-    urls = _fast_profile_tick_urls(normalized, uid, username)
+    if uid:
+        urls = _unique(
+            [
+                f"https://www.facebook.com/profile.php?id={uid}",
+                f"https://www.facebook.com/profile.php?id={uid}&sk=about",
+                *_fast_profile_tick_urls(normalized, uid, username),
+            ]
+        )[:3]
+    else:
+        urls = _fast_profile_tick_urls(normalized, uid, username)
     headers = _cookie_desktop_headers(account)
     return [(url, dict(headers), "desktop_logged_in") for url in urls]
 
