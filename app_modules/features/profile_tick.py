@@ -1511,12 +1511,12 @@ def _profile_tick_reason(reason_prefix: str, name: str, verified_label: str, fet
 
 def _profile_tick_request_timeout(force_cookie: bool) -> float:
     env_key = "PROFILE_TICK_FORCE_COOKIE_TIMEOUT_SEC" if force_cookie else "PROFILE_TICK_TIMEOUT_SEC"
-    default_value = 4.0 if force_cookie else 2.5
+    default_value = 4.0 if force_cookie else 1.2
     try:
         configured = float(os.getenv(env_key, str(default_value)))
     except ValueError:
         configured = default_value
-    return max(1.0, min(configured, 6.0 if force_cookie else 4.0))
+    return max(0.8, min(configured, 6.0 if force_cookie else 2.0))
 
 
 def _requests_timeout(timeout: float) -> tuple[float, float]:
