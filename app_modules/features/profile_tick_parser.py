@@ -18,11 +18,20 @@ VERIFIED_MARKERS = (
     "isVerified\\\":true",
 )
 
+VERIFIED_MARKER_PATTERNS = (
+    re.compile(r'"show_verified_badge_on_profile"\s*:\s*true', re.IGNORECASE),
+    re.compile(r'"is_verified"\s*:\s*true', re.IGNORECASE),
+    re.compile(r'"isVerified"\s*:\s*true', re.IGNORECASE),
+    re.compile(r'show_verified_badge_on_profile\\+"\s*:\s*true', re.IGNORECASE),
+    re.compile(r'is_verified\\+"\s*:\s*true', re.IGNORECASE),
+    re.compile(r'isVerified\\+"\s*:\s*true', re.IGNORECASE),
+)
+
 VERIFIED_MARKER_BYTES = tuple(
     marker.lower().encode("utf-8", errors="ignore")
     for marker in VERIFIED_MARKERS
     if marker.isascii()
-)
+) + (b"is_verified", b"isverified", b"show_verified_badge_on_profile")
 
 AUTH_WALL_MARKERS = (
     "/login/?next=",
@@ -48,6 +57,8 @@ def verified_label(text: str) -> str:
     if not lowered:
         return ""
     if any(marker.lower() in lowered for marker in VERIFIED_MARKERS):
+        return VERIFIED_ACCOUNT_LABEL
+    if any(pattern.search(text) for pattern in VERIFIED_MARKER_PATTERNS):
         return VERIFIED_ACCOUNT_LABEL
     return ""
 
