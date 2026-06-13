@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import Mock, patch
 
@@ -22,7 +23,13 @@ from app_modules.resolvers.uid_resolver import ResolvedInput
 
 class Step5ProfileNameTests(unittest.TestCase):
     def setUp(self):
+        self._env_patch = patch.dict(os.environ, {"PROFILE_TICK_FILTER_LIVE_COOKIES": "0"})
+        self._env_patch.start()
         clear_profile_name_cache()
+        profile_name_module._TICK_LIVE_COOKIE_CACHE.update({"signature": "", "expires_at": 0.0, "accounts": []})
+
+    def tearDown(self):
+        self._env_patch.stop()
 
     def test_extracts_og_title_first(self):
         html = """
@@ -903,6 +910,18 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertGreaterEqual(len(candidates), 2)
         self.assertEqual(candidates[0][0], "https://www.facebook.com/profile.php?id=5")
         self.assertEqual(candidates[1][0], "https://www.facebook.com/profile.php?id=5&sk=about")
+
+    @patch.dict(os.environ, {"PROFILE_TICK_FILTER_LIVE_COOKIES": "1"})
+    @patch("app_modules.features.cookie_status.probe_cookie_account")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    def test_profile_tick_cookie_accounts_filters_dead_cookies(self, load_accounts, probe_cookie):
+        load_accounts.return_value = [_cookie_account()]
+        probe_cookie.return_value = {"status": "EXPIRED_OR_LOGIN"}
+
+        accounts = profile_name_module._profile_tick_cookie_accounts(forced=False)
+
+        self.assertEqual(accounts, [])
+        self.assertEqual(probe_cookie.call_count, 1)
 
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")

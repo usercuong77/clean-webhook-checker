@@ -4,6 +4,7 @@ import html as html_lib
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlparse, urlunparse
@@ -75,6 +76,8 @@ PROFILE_NAME_BLOCKLIST = [
     "trang chủ",
     "home",
 ]
+
+_TICK_LIVE_COOKIE_CACHE: dict[str, Any] = {"signature": "", "expires_at": 0.0, "accounts": []}
 
 LETTER_RE = re.compile(r"[A-Za-zÀ-ỹ]")
 TAG_RE = re.compile(r"<[^>]+>")
@@ -851,7 +854,7 @@ def _resolve_profile_tick_with_cookie(
 ) -> ProfileTickResult:
     best_name_result: ProfileTickResult | None = None
     seen_unwrapped: set[str] = set()
-    accounts = load_cookie_accounts()[:_tick_cookie_account_limit(forced)]
+    accounts = _profile_tick_cookie_accounts(forced)
     for account_index, account in enumerate(accounts):
         if not forced and account_index > 0 and best_name_result is None:
             break
@@ -2449,6 +2452,78 @@ def _tick_cookie_account_limit(forced: bool) -> int:
     if forced:
         return configured
     return min(configured, 2)
+
+
+def _profile_tick_cookie_accounts(forced: bool):
+    accounts = load_cookie_accounts()[:_tick_cookie_account_limit(forced)]
+    if forced or not _profile_tick_filter_live_cookies():
+        return accounts
+
+    usable_accounts = [account for account in accounts if getattr(account, "is_usable", False)]
+    if not usable_accounts:
+        return []
+
+    signature = _profile_tick_cookie_signature(usable_accounts)
+    now = time.time()
+    cached_accounts = list(_TICK_LIVE_COOKIE_CACHE.get("accounts") or [])
+    if (
+        cached_accounts
+        and _TICK_LIVE_COOKIE_CACHE.get("signature") == signature
+        and float(_TICK_LIVE_COOKIE_CACHE.get("expires_at") or 0.0) > now
+    ):
+        return cached_accounts
+
+    live_accounts = _probe_live_profile_tick_cookie_accounts(usable_accounts)
+    _TICK_LIVE_COOKIE_CACHE["signature"] = signature
+    _TICK_LIVE_COOKIE_CACHE["expires_at"] = now + _profile_tick_live_cookie_cache_ttl()
+    _TICK_LIVE_COOKIE_CACHE["accounts"] = list(live_accounts)
+    return live_accounts
+
+
+def _profile_tick_filter_live_cookies() -> bool:
+    value = os.getenv("PROFILE_TICK_FILTER_LIVE_COOKIES", "1").strip().lower()
+    return value not in {"0", "false", "no", "off", "disabled"}
+
+
+def _profile_tick_live_cookie_cache_ttl() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_LIVE_COOKIE_CACHE_TTL_SEC", "60"))
+    except ValueError:
+        configured = 60
+    return max(10, min(configured, 600))
+
+
+def _profile_tick_cookie_signature(accounts) -> str:
+    parts: list[str] = []
+    for account in accounts:
+        cookies = getattr(account, "cookies", {}) or {}
+        parts.append(
+            "|".join(
+                [
+                    str(getattr(account, "c_user", "") or ""),
+                    str(cookies.get("xs", "") or "")[:24],
+                    str(cookies.get("fr", "") or "")[:24],
+                ]
+            )
+        )
+    return "||".join(parts)
+
+
+def _probe_live_profile_tick_cookie_accounts(accounts):
+    try:
+        from app_modules.features.cookie_status import probe_cookie_account
+    except Exception:
+        return accounts
+
+    live_accounts = []
+    for index, account in enumerate(accounts, start=1):
+        try:
+            row = probe_cookie_account(index, account)
+        except Exception:
+            continue
+        if str(row.get("status") or "").upper() == "LIVE":
+            live_accounts.append(account)
+    return live_accounts
 
 
 def _unique(items: list[str]) -> list[str]:
