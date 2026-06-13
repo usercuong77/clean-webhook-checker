@@ -19,6 +19,7 @@ from app_modules.features.profile_tick_parser import (
     verified_label,
 )
 from app_modules.resolvers.facebook_cookies import load_cookie_accounts
+from app_modules.resolvers.fb_uid_lite_adapter import resolve_uid_with_lite_sync
 from app_modules.resolvers.facebook_uid_resolver import extract_uid_from_url, normalize_uid, normalize_url_input
 
 
@@ -266,6 +267,31 @@ def _run_cookie_fast(
         if not force_cookie:
             break
 
+    if not uid and username:
+        resolved_uid = resolve_username_uid_fast(target)
+        if resolved_uid:
+            retry = _run_cookie_fast(
+                target=f"https://www.facebook.com/profile.php?id={resolved_uid}",
+                uid=resolved_uid,
+                username=username,
+                canonical_url=f"https://www.facebook.com/profile.php?id={resolved_uid}",
+                probes=probes,
+                force_cookie=force_cookie,
+                started=time.perf_counter(),
+            )
+            if retry.verified_label:
+                return FastProfileTickResult(
+                    uid=retry.uid,
+                    username=retry.username or username,
+                    canonical_url=retry.canonical_url,
+                    verified_label=retry.verified_label,
+                    source=retry.source,
+                    reason=f"uid_resolved_retry:{retry.reason}",
+                    http_code=retry.http_code,
+                    probes=retry.probes,
+                    used_cookie=retry.used_cookie,
+                )
+
     return FastProfileTickResult(
         uid=uid,
         username=username,
@@ -276,6 +302,14 @@ def _run_cookie_fast(
         probes=probes,
         used_cookie=True,
     )
+
+
+def resolve_username_uid_fast(target: str) -> str:
+    resolved = resolve_uid_with_lite_sync(target)
+    if not resolved.ok:
+        return ""
+    uid = str(resolved.uid or "").strip()
+    return uid if uid.isdigit() else ""
 
 
 def public_candidate_urls(target: str, uid: str, username: str) -> list[str]:
