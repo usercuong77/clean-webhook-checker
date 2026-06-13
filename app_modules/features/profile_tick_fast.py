@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, quote, urlparse, urlunparse
@@ -22,6 +23,9 @@ from app_modules.features.profile_tick_parser import (
 from app_modules.resolvers.facebook_cookies import load_cookie_accounts
 from app_modules.resolvers.fb_uid_lite_adapter import resolve_uid_with_lite_sync
 from app_modules.resolvers.facebook_uid_resolver import extract_uid_from_url, normalize_uid, normalize_url_input
+
+
+_UID_RESOLVE_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 
 @dataclass(frozen=True)
@@ -189,6 +193,9 @@ def _run_cookie_fast(
     started: float,
 ) -> FastProfileTickResult:
     accounts = first_cookie_accounts(force_cookie)
+    uid_future: Future[str] | None = None
+    if not uid and username:
+        uid_future = _UID_RESOLVE_EXECUTOR.submit(resolve_username_uid_fast, target)
     if not accounts:
         return FastProfileTickResult(
             uid=uid,
@@ -252,7 +259,7 @@ def _run_cookie_fast(
                         used_cookie=True,
                     )
                 if not uid and username:
-                    owner_uid = owner_uid_from_fetch(fetch)
+                    owner_uid = owner_uid_from_fetch(fetch) or resolved_uid_from_future(uid_future)
                     if owner_uid:
                         retry = _run_cookie_fast(
                             target=f"https://www.facebook.com/profile.php?id={owner_uid}",
@@ -293,7 +300,7 @@ def _run_cookie_fast(
             break
 
     if not uid and username:
-        resolved_uid = resolve_username_uid_fast(target)
+        resolved_uid = resolved_uid_from_future(uid_future, timeout=0.4)
         if resolved_uid:
             retry = _run_cookie_fast(
                 target=f"https://www.facebook.com/profile.php?id={resolved_uid}",
@@ -335,6 +342,17 @@ def resolve_username_uid_fast(target: str) -> str:
         return ""
     uid = str(resolved.uid or "").strip()
     return uid if uid.isdigit() else ""
+
+
+def resolved_uid_from_future(future: Future[str] | None, timeout: float = 0.0) -> str:
+    if future is None:
+        return ""
+    try:
+        if timeout <= 0 and not future.done():
+            return ""
+        return future.result(timeout=max(0.0, timeout))
+    except Exception:
+        return ""
 
 
 def owner_uid_from_fetch(fetch: FetchResult) -> str:
