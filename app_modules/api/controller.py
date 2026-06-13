@@ -10,13 +10,7 @@ from app_modules.checkers.live_die import check_live_die
 from app_modules.core.config import get_config
 from app_modules.features.cookie_status import get_cookie_status
 from app_modules.features.latest_post import get_latest_post, get_latest_post_direct_from_input, sanitize_latest_post_input
-from app_modules.features.profile_tick import (
-    clear_profile_tick_cookie_cache,
-    resolve_profile_tick_from_input,
-    resolve_profile_verified_from_input,
-    resolve_profile_verified_lite_fast_from_input,
-    resolve_profile_verified_lite_from_input,
-)
+from app_modules.features.profile_tick import resolve_profile_tick_from_input
 from app_modules.features.profile_name_resolver import choose_profile_name
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
 from app_modules.resolvers.facebook_cookies import reload_cookie_accounts_cache
@@ -36,7 +30,6 @@ class CheckRequest(BaseModel):
     mode: str = Field(default="all")
     includeName: bool = Field(default=True)
     forceCookie: bool = Field(default=False)
-    fastTick: bool = Field(default=False)
 
 
 class LatestPostRequest(BaseModel):
@@ -113,7 +106,6 @@ def cookie_status_input() -> dict[str, Any]:
 
 def cookie_reload_input() -> dict[str, Any]:
     reload_cookie_accounts_cache()
-    clear_profile_tick_cookie_cache()
     return {
         "ok": True,
         "reason": "cookie_cache_reloaded",
@@ -333,29 +325,17 @@ def _uid_resolve_fast_tds_deadline() -> float:
 
 
 def check_name_input(req: CheckRequest) -> dict[str, Any]:
-    return _check_profile_tick_input(req, include_name=True)
+    return check_tick_input(req)
 
 
 def check_tick_input(req: CheckRequest) -> dict[str, Any]:
-    return _check_profile_tick_input(req, include_name=bool(req.includeName))
-
-
-def _check_profile_tick_input(req: CheckRequest, include_name: bool) -> dict[str, Any]:
     started = perf_counter()
     raw_input = (req.input or "").strip()
-    if include_name:
-        tick = resolve_profile_tick_from_input(raw_input, force_cookie=bool(req.forceCookie))
-    elif bool(getattr(req, "fastTick", False)):
-        tick = resolve_profile_verified_lite_fast_from_input(raw_input, force_cookie=bool(req.forceCookie))
-    else:
-        tick = resolve_profile_verified_lite_from_input(raw_input, force_cookie=bool(req.forceCookie))
+    tick = resolve_profile_tick_from_input(raw_input, force_cookie=bool(req.forceCookie))
     name = tick.name
     verified_label = tick.verified_label or _verified_account_label(name)
-    if include_name:
-        status: Status = _profile_tick_status(name, verified_label, tick.reason, tick.http_code)
-        status = _profile_tick_status_with_uid(raw_input, tick, status)
-    else:
-        status = "LIVE" if verified_label else "UNKNOWN"
+    status: Status = _profile_tick_status(name, verified_label, tick.reason, tick.http_code)
+    status = _profile_tick_status_with_uid(raw_input, tick, status)
     elapsed_ms = int((perf_counter() - started) * 1000)
     return {
         "ok": True,

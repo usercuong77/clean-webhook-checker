@@ -1,7 +1,7 @@
 """Compatibility alias for the profile tick implementation.
 
-New code should import from app_modules.features.profile_tick. This alias keeps
-older tests/tools working while we finish the module split.
+Check-tick code lives in app_modules.features.profile_tick. This facade keeps
+older imports working while making the file ownership clear.
 """
 
 from __future__ import annotations
