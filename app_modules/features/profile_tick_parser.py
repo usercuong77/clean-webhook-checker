@@ -53,13 +53,39 @@ UNAVAILABLE_MARKERS = (
 
 
 def verified_label(text: str) -> str:
-    lowered = str(text or "").lower()
+    raw = str(text or "")
+    lowered = raw.lower()
     if not lowered:
         return ""
     if any(marker.lower() in lowered for marker in VERIFIED_MARKERS):
         return VERIFIED_ACCOUNT_LABEL
-    if any(pattern.search(text) for pattern in VERIFIED_MARKER_PATTERNS):
+    if any(pattern.search(raw) for pattern in VERIFIED_MARKER_PATTERNS):
         return VERIFIED_ACCOUNT_LABEL
+    legacy = legacy_verified_label(raw)
+    if legacy:
+        return VERIFIED_ACCOUNT_LABEL
+    return ""
+
+
+def legacy_verified_label(text: str) -> str:
+    """Reuse the older scoped parser on already-fetched HTML.
+
+    This keeps the fast network path while preserving accuracy for Facebook
+    pages whose verified badge is not exposed as a compact JSON marker.
+    """
+
+    try:
+        from app_modules.features import profile_tick as legacy_tick
+
+        label = legacy_tick.extract_profile_verified_label(text, "", "")
+        if label:
+            return label
+        scope = text[: min(len(text), 900_000)]
+        name = legacy_tick.extract_profile_name(scope)
+        if name:
+            return legacy_tick.extract_profile_verified_label(text, name, "")
+    except Exception:
+        return ""
     return ""
 
 
