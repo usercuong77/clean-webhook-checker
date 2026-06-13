@@ -2161,19 +2161,31 @@ def _fetch_limited_text(
             allow_redirects=True,
             stream=True,
         ) as response:
+            started_at = time.monotonic()
+            total_deadline = max(0.8, float(timeout))
             if stop_on_verified_uid:
-                text = ""
+                chunks: list[bytes] = []
                 total = 0
+                tail = b""
                 encoding = response.encoding or "utf-8"
+                text: str | None = None
                 for chunk in response.iter_content(chunk_size=32768):
                     if not chunk:
                         continue
-                    text += chunk.decode(encoding, errors="ignore")
+                    chunks.append(chunk)
                     total += len(chunk)
-                    if _profile_tick_stream_has_verified(text, stop_on_verified_uid):
-                        break
+                    scan = (tail + chunk).lower()
+                    if _verified_hint_bytes_seen(scan):
+                        text = b"".join(chunks).decode(encoding, errors="ignore")
+                        if _profile_tick_stream_has_verified(text, stop_on_verified_uid):
+                            break
+                    tail = scan[-2048:]
                     if total >= max_bytes:
                         break
+                    if time.monotonic() - started_at >= total_deadline:
+                        break
+                if text is None:
+                    text = b"".join(chunks).decode(encoding, errors="ignore")
                 return FetchResult(
                     http_code=response.status_code,
                     text=text,
@@ -2189,6 +2201,8 @@ def _fetch_limited_text(
                 chunks.append(chunk)
                 total += len(chunk)
                 if total >= max_bytes:
+                    break
+                if time.monotonic() - started_at >= total_deadline:
                     break
             text = b"".join(chunks).decode(response.encoding or "utf-8", errors="ignore")
             return FetchResult(
@@ -2206,6 +2220,18 @@ def _fetch_limited_text(
         )
 
 
+def _verified_hint_bytes_seen(chunk: bytes) -> bool:
+    lowered = bytes(chunk or b"").lower()
+    return any(marker in lowered for marker in _PROFILE_TICK_VERIFIED_MARKER_BYTES)
+
+
+_PROFILE_TICK_VERIFIED_MARKER_BYTES = tuple(
+    marker.lower().encode("utf-8", errors="ignore")
+    for marker in PROFILE_TICK_VERIFIED_MARKERS
+    if marker.isascii()
+)
+
+
 def _fetch_lite_text_until_verified(
     url: str,
     headers: Mapping[str, str],
@@ -2221,19 +2247,32 @@ def _fetch_lite_text_until_verified(
             allow_redirects=True,
             stream=True,
         ) as response:
-            text = ""
+            started_at = time.monotonic()
+            total_deadline = max(0.8, float(timeout))
+            chunks: list[bytes] = []
+            text: str | None = None
             total = 0
+            tail = b""
             encoding = response.encoding or "utf-8"
             chunk_size = _tick_lite_stream_chunk_size()
             for chunk in response.iter_content(chunk_size=chunk_size):
                 if not chunk:
                     continue
+                chunks.append(chunk)
                 total += len(chunk)
-                text += chunk.decode(encoding, errors="ignore")
-                if _profile_tick_stream_has_verified(text, profile_uid):
-                    break
+                scan = (tail + chunk).lower()
+                if _verified_hint_bytes_seen(scan):
+                    text = b"".join(chunks).decode(encoding, errors="ignore")
+                    if _profile_tick_stream_has_verified(text, profile_uid):
+                        break
+                tail = scan[-2048:]
                 if total >= max_bytes:
                     break
+                if time.monotonic() - started_at >= total_deadline:
+                    break
+
+            if text is None:
+                text = b"".join(chunks).decode(encoding, errors="ignore")
             return FetchResult(
                 http_code=response.status_code,
                 text=text,
