@@ -308,6 +308,25 @@ def resolve_profile_tick_from_input(raw_input: str, force_cookie: bool = False) 
                 return public
         if _public_tick_miss_is_terminal(public):
             return public
+        uid = public.uid or uid
+        username = public.username or username
+        canonical_url = _canonical_profile_tick_url(public.canonical_url or normalized, uid)
+        # Normal /checktick must stay fast. Cookie fallback can fan out across
+        # several Facebook surfaces and accounts, which is useful for "Check ky"
+        # but too expensive for the default path on Render free instances.
+        if _should_use_fast_cookie_fallback_for_tick(uid, username):
+            cookie = _resolve_profile_tick_with_cookie(
+                normalized=normalized,
+                uid=uid,
+                username=username,
+                canonical_url=canonical_url,
+                timeout=timeout,
+                probes=probes,
+                forced=False,
+            )
+            if cookie.verified_label or cookie.name:
+                return cookie
+        return public_name_result or public
         unwrapped = _first_login_next_target_from_probes(probes)
         if unwrapped:
             normalized = unwrapped
@@ -487,6 +506,10 @@ def _should_confirm_public_name_only_result(normalized: str, result: ProfileTick
     return _should_cookie_confirm_public_name_only(normalized) or "login_next_name_found" in reason
 
 
+def _should_use_fast_cookie_fallback_for_tick(uid: str, username: str) -> bool:
+    return bool(uid) and (not bool(username) or str(username).strip().isdigit())
+
+
 def _profile_tick_confirm_any_name_only() -> bool:
     value = str(os.getenv("PROFILE_TICK_CONFIRM_ANY_NAME_ONLY", "0") or "").strip().lower()
     return value not in {"0", "false", "off", "no"}
@@ -494,17 +517,17 @@ def _profile_tick_confirm_any_name_only() -> bool:
 
 def _share_name_only_no_cookie_retry_count() -> int:
     try:
-        configured = int(os.getenv("PROFILE_TICK_SHARE_NAME_RETRY_COUNT", "2"))
+        configured = int(os.getenv("PROFILE_TICK_SHARE_NAME_RETRY_COUNT", "0"))
     except ValueError:
-        configured = 2
+        configured = 0
     return max(0, min(configured, 2))
 
 
 def _profile_tick_final_public_retry_count() -> int:
     try:
-        configured = int(os.getenv("PROFILE_TICK_FINAL_PUBLIC_RETRY_COUNT", "1"))
+        configured = int(os.getenv("PROFILE_TICK_FINAL_PUBLIC_RETRY_COUNT", "0"))
     except ValueError:
-        configured = 1
+        configured = 0
     return max(0, min(configured, 2))
 
 
@@ -660,6 +683,10 @@ def _resolve_profile_tick_with_cookie(
                 if result.name and account_name_result is None:
                     account_name_result = result
         if account_name_result:
+            if not forced:
+                if best_name_result is None:
+                    best_name_result = account_name_result
+                continue
             deep_result = _resolve_profile_tick_cookie_deep_verify(
                 normalized=normalized,
                 uid=uid,
@@ -1606,7 +1633,7 @@ def _tick_cookie_account_limit(forced: bool) -> int:
         return 0
     if forced:
         return configured
-    return min(configured, 2)
+    return min(configured, 1)
 
 
 def _unique(items: list[str]) -> list[str]:
