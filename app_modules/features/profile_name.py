@@ -1983,6 +1983,10 @@ def clear_profile_name_cache() -> None:
     return None
 
 
+def clear_profile_tick_cookie_cache() -> None:
+    _TICK_LIVE_COOKIE_CACHE.update({"signature": "", "expires_at": 0.0, "accounts": []})
+
+
 def _extract_og_title_candidates(text: str) -> list[str]:
     out: list[str] = []
     for tag in META_TAG_RE.findall(text):
