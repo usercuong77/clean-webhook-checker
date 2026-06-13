@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -250,6 +251,30 @@ def _run_cookie_fast(
                         probes=probes,
                         used_cookie=True,
                     )
+                if not uid and username:
+                    owner_uid = owner_uid_from_fetch(fetch)
+                    if owner_uid:
+                        retry = _run_cookie_fast(
+                            target=f"https://www.facebook.com/profile.php?id={owner_uid}",
+                            uid=owner_uid,
+                            username=username,
+                            canonical_url=f"https://www.facebook.com/profile.php?id={owner_uid}",
+                            probes=probes,
+                            force_cookie=force_cookie,
+                            started=time.perf_counter(),
+                        )
+                        if retry.verified_label:
+                            return FastProfileTickResult(
+                                uid=retry.uid,
+                                username=retry.username or username,
+                                canonical_url=retry.canonical_url,
+                                verified_label=retry.verified_label,
+                                source=retry.source,
+                                reason=f"owner_uid_retry:{retry.reason}",
+                                http_code=retry.http_code,
+                                probes=retry.probes,
+                                used_cookie=retry.used_cookie,
+                            )
                 next_target = login_next_target(fetch.final_url)
                 if next_target:
                     retry = _cookie_retry_login_next(
@@ -310,6 +335,25 @@ def resolve_username_uid_fast(target: str) -> str:
         return ""
     uid = str(resolved.uid or "").strip()
     return uid if uid.isdigit() else ""
+
+
+def owner_uid_from_fetch(fetch: FetchResult) -> str:
+    uid = extract_uid_from_url(fetch.final_url)
+    if uid:
+        return uid
+    text = str(fetch.text or "")
+    for pattern in (
+        r"fb://profile/(\d{1,20})",
+        r'"profile_owner_id"\s*:\s*"?(\d{1,20})"?',
+        r'"profile_owner"\s*:\s*"?(\d{1,20})"?',
+        r"profile\.php\?id=(\d{1,20})",
+    ):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip()
+            if candidate.isdigit():
+                return candidate
+    return ""
 
 
 def public_candidate_urls(target: str, uid: str, username: str) -> list[str]:
