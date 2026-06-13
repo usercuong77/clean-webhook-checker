@@ -902,6 +902,66 @@ class Step5ProfileNameTests(unittest.TestCase):
     @patch("app_modules.features.profile_name.load_cookie_accounts")
     @patch("app_modules.features.profile_name._fetch_limited_text")
     @patch("app_modules.features.profile_name._fetch_lite_text_until_verified")
+    def test_checktick_lite_cookie_login_next_retries_one_url_only(
+        self,
+        fetch_lite,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        uid = "5"
+        load_accounts.return_value = [_cookie_account()]
+        public_candidates.return_value = [(f"https://www.facebook.com/profile.php?id={uid}&sk=about", {}, "public")]
+        cookie_candidates.return_value = [(f"https://www.facebook.com/profile.php?id={uid}", {}, "cookie")]
+        fetch_lite.return_value = _fetch_result(
+            200,
+            "<title>Facebook</title><body>Log in to Facebook</body>",
+            f"https://www.facebook.com/profile.php?id={uid}&sk=about",
+            "ok",
+        )
+        fetch_limited.side_effect = [
+            _fetch_result(
+                200,
+                "<title>Facebook</title>",
+                "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2FChrisHughes",
+                "ok",
+            ),
+            _fetch_result(
+                200,
+                f'ProfileCometHeader Chris Hughes {uid} "is_verified":true',
+                "https://www.facebook.com/ChrisHughes",
+                "ok",
+            ),
+        ]
+
+        result = check_tick_input(CheckRequest(input=f"https://www.facebook.com/{uid}", mode="1", includeName=False))
+
+        self.assertEqual(result["status"], "LIVE")
+        self.assertTrue(result["verified"])
+        self.assertEqual(fetch_limited.call_count, 2)
+        requested_urls = [call.kwargs.get("url") or call.args[0] for call in fetch_limited.call_args_list]
+        self.assertEqual(requested_urls[-1], "https://www.facebook.com/ChrisHughes")
+
+    def test_tick_only_cookie_read_cap_uses_deeper_window_for_short_uid(self):
+        self.assertGreaterEqual(
+            profile_name_module._tick_only_cookie_read_cap_bytes_for("https://www.facebook.com/5", "5", "ChrisHughes"),
+            3_400_000,
+        )
+        self.assertEqual(
+            profile_name_module._tick_only_cookie_read_cap_bytes_for(
+                "https://www.facebook.com/plain.user",
+                "",
+                "plain.user",
+            ),
+            profile_name_module._tick_only_cookie_read_cap_bytes(),
+        )
+
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_lite_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    @patch("app_modules.features.profile_name._fetch_lite_text_until_verified")
     def test_checktick_lite_public_not_verified_does_not_use_cookie(
         self,
         fetch_lite,

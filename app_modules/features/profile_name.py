@@ -1094,7 +1094,7 @@ def _resolve_profile_verified_with_cookie(
                 url=url,
                 headers=headers,
                 timeout=timeout,
-                max_bytes=_tick_only_cookie_read_cap_bytes(),
+                max_bytes=_tick_only_cookie_read_cap_bytes_for(normalized, uid, username),
                 raw_uid=uid,
                 raw_username=username,
                 fallback_canonical_url=canonical_url,
@@ -1440,8 +1440,9 @@ def _profile_verified_result_from_fetch(
     username = raw_username or _profile_tick_username_from_url(fetch.final_url)
     canonical_url = _canonical_profile_tick_url(fetch.final_url or fallback_canonical_url, uid)
     verified_label = extract_profile_verified_label(fetch.text, "", uid)
-    if not verified_label and _text_has_verified_hint(fetch.text[:700000]):
-        scope_name = extract_profile_name(fetch.text[:700000])
+    if not verified_label and _text_has_verified_hint(fetch.text[:900000]):
+        scope_window = fetch.text[: min(len(fetch.text), _profile_verified_scope_scan_bytes(uid))]
+        scope_name = extract_profile_name(scope_window)
         if scope_name:
             verified_label = extract_profile_verified_label(fetch.text, scope_name, uid)
     profile_seen = _profile_verified_profile_seen(fetch, uid, username, verified_label)
@@ -1581,6 +1582,8 @@ def _profile_verified_results_from_candidate(
     retry_uid = raw_uid or extract_uid_from_url(target)
     retry_username = raw_username or _profile_tick_username_from_url(target)
     retry_urls = _fast_profile_tick_urls(target, retry_uid, retry_username) or [target]
+    if used_cookie:
+        retry_urls = retry_urls[:1]
     for retry_url in retry_urls:
         key = f"{header_label}|{retry_url.lower()}"
         if key in seen:
@@ -2390,6 +2393,20 @@ def _tick_only_cookie_read_cap_bytes() -> int:
     except ValueError:
         configured = TICK_ONLY_COOKIE_READ_CAP_BYTES
     return max(250_000, min(configured, 2_500_000))
+
+
+def _tick_only_cookie_read_cap_bytes_for(normalized: str, uid: str, username: str) -> int:
+    base = _tick_only_cookie_read_cap_bytes()
+    value = str(normalized or "").lower()
+    if uid and (len(str(uid)) <= 8 or "profile.php" in value):
+        return max(base, min(TICK_COOKIE_PROFILE_UID_READ_CAP_BYTES, 3_400_000))
+    return base
+
+
+def _profile_verified_scope_scan_bytes(uid: str) -> int:
+    if uid and len(str(uid)) <= 8:
+        return 2_200_000
+    return 900_000
 
 
 def _tick_only_lite_public_read_cap_bytes() -> int:
