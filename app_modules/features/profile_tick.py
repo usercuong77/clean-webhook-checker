@@ -13,6 +13,7 @@ import requests
 
 from app_modules.checkers.live_die import LiveDieResult
 from app_modules.core.config import get_config
+from app_modules.features.profile_tick_fast import FastProfileTickResult, resolve_profile_verified_lite_fast
 from app_modules.resolvers.facebook_cookies import cookie_header, load_cookie_accounts
 from app_modules.resolvers.facebook_uid_resolver import (
     extract_uid_from_url,
@@ -488,6 +489,9 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
     for /checktick; the older resolver remains available as a safer reference.
     """
 
+    if _profile_tick_fast_split_enabled():
+        return resolve_profile_verified_lite_fast_from_input(raw_input, force_cookie=force_cookie)
+
     value = str(raw_input or "").strip()
     normalized = _normalize_profile_tick_input(value)
     uid = normalize_uid(value) or extract_uid_from_url(normalized)
@@ -543,6 +547,31 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
         timeout=_profile_tick_request_timeout(True),
         probes=probes,
         forced=force_cookie,
+    )
+
+
+def resolve_profile_verified_lite_fast_from_input(raw_input: str, force_cookie: bool = False) -> ProfileTickResult:
+    return _profile_tick_result_from_fast(resolve_profile_verified_lite_fast(raw_input, force_cookie=force_cookie))
+
+
+def _profile_tick_fast_split_enabled() -> bool:
+    value = os.getenv("PROFILE_TICK_FAST_SPLIT_ENABLED", "0").strip().lower()
+    return value not in {"0", "false", "no", "off", "disabled"}
+
+
+def _profile_tick_result_from_fast(result: FastProfileTickResult) -> ProfileTickResult:
+    return ProfileTickResult(
+        name="",
+        display_name="",
+        verified_label=result.verified_label,
+        uid=result.uid,
+        username=result.username,
+        canonical_url=result.canonical_url,
+        source=result.source,
+        reason=result.reason,
+        http_code=result.http_code,
+        probes=result.probes,
+        used_cookie=result.used_cookie,
     )
 
 

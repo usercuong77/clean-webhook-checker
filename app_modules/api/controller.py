@@ -14,6 +14,7 @@ from app_modules.features.profile_tick import (
     clear_profile_tick_cookie_cache,
     resolve_profile_tick_from_input,
     resolve_profile_verified_from_input,
+    resolve_profile_verified_lite_fast_from_input,
     resolve_profile_verified_lite_from_input,
 )
 from app_modules.features.profile_name_resolver import choose_profile_name
@@ -35,6 +36,7 @@ class CheckRequest(BaseModel):
     mode: str = Field(default="all")
     includeName: bool = Field(default=True)
     forceCookie: bool = Field(default=False)
+    fastTick: bool = Field(default=False)
 
 
 class LatestPostRequest(BaseModel):
@@ -343,6 +345,8 @@ def _check_profile_tick_input(req: CheckRequest, include_name: bool) -> dict[str
     raw_input = (req.input or "").strip()
     if include_name:
         tick = resolve_profile_tick_from_input(raw_input, force_cookie=bool(req.forceCookie))
+    elif bool(getattr(req, "fastTick", False)):
+        tick = resolve_profile_verified_lite_fast_from_input(raw_input, force_cookie=bool(req.forceCookie))
     else:
         tick = resolve_profile_verified_lite_from_input(raw_input, force_cookie=bool(req.forceCookie))
     name = tick.name
