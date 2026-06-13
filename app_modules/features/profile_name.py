@@ -555,9 +555,9 @@ def _profile_tick_should_cookie_fallback_for_uid(normalized: str, uid: str, user
 
 def _profile_tick_uid_cookie_fallback_timeout() -> float:
     try:
-        configured = float(os.getenv("PROFILE_TICK_UID_COOKIE_FALLBACK_TIMEOUT_SEC", "2.2"))
+        configured = float(os.getenv("PROFILE_TICK_UID_COOKIE_FALLBACK_TIMEOUT_SEC", "1.8"))
     except ValueError:
-        configured = 2.2
+        configured = 1.8
     return max(1.0, min(configured, 4.0))
 
 
@@ -1084,31 +1084,33 @@ def _resolve_profile_verified_with_cookie(
     for account in accounts:
         if not account.is_usable:
             continue
-        probe_count = 0
-        max_probes = _tick_only_cookie_max_probe_count(forced)
-        for url, headers, header_label in _cookie_tick_probe_candidates(normalized, uid, username, account):
-            if probe_count >= max_probes:
-                break
-            probe_count += 1
-            results = _profile_verified_results_from_candidate(
-                url=url,
-                headers=headers,
-                timeout=timeout,
-                max_bytes=_tick_only_cookie_read_cap_bytes_for(normalized, uid, username),
-                raw_uid=uid,
-                raw_username=username,
-                fallback_canonical_url=canonical_url,
-                source="profile_tick_cookie",
-                reason_prefix="cookie_forced" if forced else "cookie_fallback",
-                header_label=header_label,
-                used_cookie=True,
-                probes=probes,
-                cookie_account=account.masked_id,
-                seen_unwrapped=seen_unwrapped,
-            )
-            for result in results:
-                if result.verified_label:
-                    return result
+        with requests.Session() as session:
+            probe_count = 0
+            max_probes = _tick_only_cookie_max_probe_count(forced)
+            for url, headers, header_label in _cookie_tick_probe_candidates(normalized, uid, username, account):
+                if probe_count >= max_probes:
+                    break
+                probe_count += 1
+                results = _profile_verified_results_from_candidate(
+                    url=url,
+                    headers=headers,
+                    timeout=timeout,
+                    max_bytes=_tick_only_cookie_read_cap_bytes_for(normalized, uid, username),
+                    raw_uid=uid,
+                    raw_username=username,
+                    fallback_canonical_url=canonical_url,
+                    source="profile_tick_cookie",
+                    reason_prefix="cookie_forced" if forced else "cookie_fallback",
+                    header_label=header_label,
+                    used_cookie=True,
+                    probes=probes,
+                    cookie_account=account.masked_id,
+                    seen_unwrapped=seen_unwrapped,
+                    session=session,
+                )
+                for result in results:
+                    if result.verified_label:
+                        return result
         if not forced:
             break
 
@@ -1558,8 +1560,16 @@ def _profile_verified_results_from_candidate(
     probes: list[dict[str, Any]],
     cookie_account: str = "",
     seen_unwrapped: set[str] | None = None,
+    session: requests.Session | None = None,
 ) -> list[ProfileTickResult]:
-    fetch = _fetch_limited_text(url, headers, timeout, max_bytes)
+    fetch = _fetch_limited_text(
+        url,
+        headers,
+        timeout,
+        max_bytes,
+        stop_on_verified_uid=raw_uid if used_cookie else "",
+        session=session,
+    )
     results = [
         _profile_verified_result_from_fetch(
             fetch=fetch,
@@ -1590,7 +1600,14 @@ def _profile_verified_results_from_candidate(
             continue
         seen.add(key)
 
-        retry_fetch = _fetch_limited_text(url=retry_url, headers=headers, timeout=timeout, max_bytes=max_bytes)
+        retry_fetch = _fetch_limited_text(
+            url=retry_url,
+            headers=headers,
+            timeout=timeout,
+            max_bytes=max_bytes,
+            stop_on_verified_uid=retry_uid if used_cookie else "",
+            session=session,
+        )
         result = _profile_verified_result_from_fetch(
             fetch=retry_fetch,
             raw_uid=retry_uid,
@@ -2127,15 +2144,43 @@ def _fetch_text(url: str, headers: Mapping[str, str], timeout: float) -> FetchRe
         )
 
 
-def _fetch_limited_text(url: str, headers: Mapping[str, str], timeout: float, max_bytes: int) -> FetchResult:
+def _fetch_limited_text(
+    url: str,
+    headers: Mapping[str, str],
+    timeout: float,
+    max_bytes: int,
+    stop_on_verified_uid: str = "",
+    session: requests.Session | None = None,
+) -> FetchResult:
     try:
-        with requests.get(
+        client = session or requests
+        with client.get(
             url,
             headers=dict(headers),
             timeout=_requests_timeout(timeout),
             allow_redirects=True,
             stream=True,
         ) as response:
+            if stop_on_verified_uid:
+                text = ""
+                total = 0
+                encoding = response.encoding or "utf-8"
+                for chunk in response.iter_content(chunk_size=32768):
+                    if not chunk:
+                        continue
+                    text += chunk.decode(encoding, errors="ignore")
+                    total += len(chunk)
+                    if _profile_tick_stream_has_verified(text, stop_on_verified_uid):
+                        break
+                    if total >= max_bytes:
+                        break
+                return FetchResult(
+                    http_code=response.status_code,
+                    text=text,
+                    final_url=response.url or url,
+                    reason="ok" if 200 <= response.status_code < 400 else f"http_{response.status_code}",
+                )
+
             chunks: list[bytes] = []
             total = 0
             for chunk in response.iter_content(chunk_size=32768):
@@ -2185,7 +2230,7 @@ def _fetch_lite_text_until_verified(
                     continue
                 total += len(chunk)
                 text += chunk.decode(encoding, errors="ignore")
-                if _text_has_verified_hint(text) and extract_profile_verified_label(text, "", profile_uid):
+                if _profile_tick_stream_has_verified(text, profile_uid):
                     break
                 if total >= max_bytes:
                     break
@@ -2202,6 +2247,17 @@ def _fetch_lite_text_until_verified(
             final_url=url,
             reason=f"request_error:{type(exc).__name__}",
         )
+
+
+def _profile_tick_stream_has_verified(text: str, profile_uid: str = "") -> bool:
+    if not _text_has_verified_hint(text):
+        return False
+    if extract_profile_verified_label(text, "", profile_uid):
+        return True
+    scope_name = extract_profile_name(text[: min(len(text), _profile_verified_scope_scan_bytes(profile_uid))])
+    if scope_name and extract_profile_verified_label(text, scope_name, profile_uid):
+        return True
+    return False
 
 
 def _text_has_verified_hint(text: str) -> bool:
