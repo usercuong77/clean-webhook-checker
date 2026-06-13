@@ -533,10 +533,26 @@ def _profile_tick_final_public_retry_count() -> int:
 
 def _public_tick_name_only_extra_probe_count() -> int:
     try:
-        configured = int(os.getenv("PROFILE_TICK_NAME_ONLY_EXTRA_PUBLIC_PROBES", "1"))
+        configured = int(os.getenv("PROFILE_TICK_NAME_ONLY_EXTRA_PUBLIC_PROBES", "0"))
+    except ValueError:
+        configured = 0
+    return max(0, min(configured, 8))
+
+
+def _profile_tick_public_url_limit() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_PUBLIC_URL_LIMIT", "2"))
+    except ValueError:
+        configured = 2
+    return max(1, min(configured, 8))
+
+
+def _profile_tick_login_next_retry_url_limit() -> int:
+    try:
+        configured = int(os.getenv("PROFILE_TICK_LOGIN_NEXT_RETRY_URL_LIMIT", "1"))
     except ValueError:
         configured = 1
-    return max(0, min(configured, 8))
+    return max(1, min(configured, 4))
 
 
 def _profile_tick_username_from_url(url: str) -> str:
@@ -619,6 +635,8 @@ def _resolve_profile_tick_no_cookie(
                 return result
             if result.name and best_name_result is None:
                 best_name_result = result
+        if best_name_result and max_extra_after_name <= 0:
+            break
         if best_name_result and had_name_before:
             extra_after_name += 1
             if extra_after_name >= max_extra_after_name:
@@ -794,10 +812,7 @@ def _public_tick_probe_candidates(normalized: str, uid: str, username: str) -> l
         if _is_mobile_profile_tick_url(url):
             header_candidates = (("facebookexternalhit", _facebook_externalhit_headers()),)
         else:
-            header_candidates = (
-                ("facebookcatalog", _facebook_catalog_headers()),
-                ("facebookexternalhit", _facebook_externalhit_headers()),
-            )
+            header_candidates = (("facebookcatalog", _facebook_catalog_headers()),)
         for label, headers in header_candidates:
             key = f"{label}|{url}"
             if key in seen:
@@ -825,7 +840,7 @@ def _public_tick_urls(normalized: str, uid: str, username: str) -> list[str]:
                 f"https://mbasic.facebook.com/{safe_username}/about",
             ]
         )
-    return _unique(urls)
+    return _unique(urls)[:_profile_tick_public_url_limit()]
 
 
 def _is_mobile_profile_tick_url(url: str) -> bool:
@@ -1005,7 +1020,9 @@ def _profile_tick_results_from_candidate(
     seen = seen_unwrapped if seen_unwrapped is not None else set()
     retry_uid = raw_uid or extract_uid_from_url(target)
     retry_username = raw_username or _profile_tick_username_from_url(target)
-    retry_urls = _fast_profile_tick_urls(target, retry_uid, retry_username) or [target]
+    retry_urls = (_fast_profile_tick_urls(target, retry_uid, retry_username) or [target])[
+        :_profile_tick_login_next_retry_url_limit()
+    ]
     for retry_url in retry_urls:
         key = f"{header_label}|{retry_url.lower()}"
         if key in seen:
