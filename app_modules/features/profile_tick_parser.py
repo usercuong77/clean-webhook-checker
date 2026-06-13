@@ -31,7 +31,7 @@ VERIFIED_MARKER_BYTES = tuple(
     marker.lower().encode("utf-8", errors="ignore")
     for marker in VERIFIED_MARKERS
     if marker.isascii()
-) + (b"is_verified", b"isverified", b"show_verified_badge_on_profile")
+)
 
 AUTH_WALL_MARKERS = (
     "/login/?next=",
