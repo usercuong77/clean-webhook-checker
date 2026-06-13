@@ -919,8 +919,10 @@ class Step5ProfileNameTests(unittest.TestCase):
         probe_cookie.return_value = {"status": "EXPIRED_OR_LOGIN"}
 
         accounts = profile_name_module._profile_tick_cookie_accounts(forced=False)
+        cached_accounts = profile_name_module._profile_tick_cookie_accounts(forced=False)
 
         self.assertEqual(accounts, [])
+        self.assertEqual(cached_accounts, [])
         self.assertEqual(probe_cookie.call_count, 1)
 
     @patch("app_modules.features.profile_name.load_cookie_accounts")

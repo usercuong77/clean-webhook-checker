@@ -524,7 +524,12 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
             probes=probes,
             forced=False,
         )
-        if cookie.verified_label or _profile_verified_result_has_profile(cookie) or cookie.used_cookie:
+        if (
+            cookie.verified_label
+            or _profile_verified_result_has_profile(cookie)
+            or cookie.used_cookie
+            or cookie.reason == "cookie_no_live_account_available"
+        ):
             return cookie
         return public
 
@@ -855,6 +860,20 @@ def _resolve_profile_tick_with_cookie(
     best_name_result: ProfileTickResult | None = None
     seen_unwrapped: set[str] = set()
     accounts = _profile_tick_cookie_accounts(forced)
+    if not accounts:
+        return ProfileTickResult(
+            name="",
+            display_name="",
+            verified_label="",
+            uid=uid,
+            username=username,
+            canonical_url=canonical_url,
+            source="profile_tick_cookie",
+            reason="cookie_no_live_account_available",
+            http_code=_last_probe_http_code(probes),
+            probes=probes,
+            used_cookie=False,
+        )
     for account_index, account in enumerate(accounts):
         if not forced and account_index > 0 and best_name_result is None:
             break
@@ -2467,8 +2486,7 @@ def _profile_tick_cookie_accounts(forced: bool):
     now = time.time()
     cached_accounts = list(_TICK_LIVE_COOKIE_CACHE.get("accounts") or [])
     if (
-        cached_accounts
-        and _TICK_LIVE_COOKIE_CACHE.get("signature") == signature
+        _TICK_LIVE_COOKIE_CACHE.get("signature") == signature
         and float(_TICK_LIVE_COOKIE_CACHE.get("expires_at") or 0.0) > now
     ):
         return cached_accounts
