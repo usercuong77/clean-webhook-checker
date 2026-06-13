@@ -897,6 +897,39 @@ class Step5ProfileNameTests(unittest.TestCase):
         self.assertEqual(load_accounts.call_count, 1)
         self.assertEqual(cookie_candidates.call_count, 1)
 
+    @patch("app_modules.features.profile_name._cookie_tick_probe_candidates")
+    @patch("app_modules.features.profile_name._public_tick_lite_probe_candidates")
+    @patch("app_modules.features.profile_name.load_cookie_accounts")
+    @patch("app_modules.features.profile_name._fetch_limited_text")
+    @patch("app_modules.features.profile_name._fetch_lite_text_until_verified")
+    def test_checktick_lite_public_not_verified_does_not_use_cookie(
+        self,
+        fetch_lite,
+        fetch_limited,
+        load_accounts,
+        public_candidates,
+        cookie_candidates,
+    ):
+        public_candidates.return_value = [("https://www.facebook.com/plain.user", {}, "public")]
+        fetch_lite.return_value = _fetch_result(
+            200,
+            '<meta property="og:title" content="Plain User">',
+            "https://www.facebook.com/plain.user",
+            "ok",
+        )
+
+        result = check_tick_input(CheckRequest(input="https://www.facebook.com/plain.user", mode="1", includeName=False))
+
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertFalse(result["verified"])
+        self.assertFalse(result["usedCookie"])
+        self.assertEqual(result["checkTickMode"], "no_cookie")
+        self.assertEqual(result["reason"], "lite_no_cookie_verified_not_found")
+        self.assertEqual(fetch_lite.call_count, 1)
+        fetch_limited.assert_not_called()
+        load_accounts.assert_not_called()
+        cookie_candidates.assert_not_called()
+
     def test_cookie_tick_candidates_prefer_uid_profile_url(self):
         account = _cookie_account()
 

@@ -515,7 +515,9 @@ def resolve_profile_verified_lite_from_input(raw_input: str, force_cookie: bool 
         canonical_url = _canonical_profile_tick_url(normalized, uid)
 
     if not force_cookie:
-        cookie = _resolve_profile_verified_cookie_fallback_with_name_context(
+        if not _profile_verified_lite_should_cookie_fallback(public):
+            return public
+        cookie = _resolve_profile_verified_with_cookie(
             normalized=normalized,
             uid=uid,
             username=username,
@@ -557,6 +559,17 @@ def _profile_tick_uid_cookie_fallback_timeout() -> float:
     except ValueError:
         configured = 2.2
     return max(1.0, min(configured, 4.0))
+
+
+def _profile_verified_lite_should_cookie_fallback(result: ProfileTickResult) -> bool:
+    if result.verified_label or result.used_cookie:
+        return False
+    reason = str(result.reason or "").lower()
+    if any(marker in reason for marker in ("login_next", "auth_wall", "checkpoint")):
+        return True
+    if "request_error" in reason or "http_5" in reason or "http_429" in reason:
+        return True
+    return False
 
 
 def _resolve_profile_verified_cookie_fallback_with_name_context(
@@ -1025,6 +1038,8 @@ def _resolve_profile_verified_lite_no_cookie(
                 return result
             if _public_tick_miss_is_terminal(result):
                 return result
+            if _profile_verified_lite_should_cookie_fallback(result):
+                return result
 
     return ProfileTickResult(
         name="",
@@ -1051,7 +1066,21 @@ def _resolve_profile_verified_with_cookie(
     forced: bool,
 ) -> ProfileTickResult:
     seen_unwrapped: set[str] = set()
-    accounts = load_cookie_accounts()[:_tick_cookie_account_limit(forced)]
+    accounts = _profile_tick_cookie_accounts(forced)
+    if not accounts:
+        return ProfileTickResult(
+            name="",
+            display_name="",
+            verified_label="",
+            uid=uid,
+            username=username,
+            canonical_url=canonical_url,
+            source="profile_tick_cookie",
+            reason="cookie_no_live_account_available",
+            http_code=_last_probe_http_code(probes),
+            probes=probes,
+            used_cookie=False,
+        )
     for account in accounts:
         if not account.is_usable:
             continue
@@ -2390,7 +2419,7 @@ def _tick_lite_stream_chunk_size() -> int:
 
 
 def _tick_only_cookie_max_probe_count(forced: bool) -> int:
-    default = 6 if forced else 2
+    default = 6 if forced else 1
     try:
         configured = int(os.getenv("PROFILE_TICK_ONLY_COOKIE_MAX_PROBES", str(default)))
     except ValueError:
