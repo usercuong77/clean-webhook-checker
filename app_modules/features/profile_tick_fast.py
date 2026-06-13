@@ -250,7 +250,7 @@ def _run_cookie_fast(
                         used_cookie=True,
                     )
                 next_target = login_next_target(fetch.final_url)
-                if next_target and time.perf_counter() - started < total_deadline:
+                if next_target:
                     retry = _cookie_retry_login_next(
                         session=session,
                         account=account,
