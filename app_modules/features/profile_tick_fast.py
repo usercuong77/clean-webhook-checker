@@ -249,6 +249,20 @@ def _run_cookie_fast(
                         probes=probes,
                         used_cookie=True,
                     )
+                next_target = login_next_target(fetch.final_url)
+                if next_target and time.perf_counter() - started < total_deadline:
+                    retry = _cookie_retry_login_next(
+                        session=session,
+                        account=account,
+                        next_target=next_target,
+                        uid=uid,
+                        username=username,
+                        canonical_url=canonical_url,
+                        probes=probes,
+                        force_cookie=force_cookie,
+                    )
+                    if retry.verified_label:
+                        return retry
         if not force_cookie:
             break
 
@@ -287,7 +301,7 @@ def public_candidate_urls(target: str, uid: str, username: str) -> list[str]:
 def cookie_candidate_urls(target: str, uid: str, username: str) -> list[str]:
     urls: list[str] = []
     if uid:
-        urls.extend([f"https://www.facebook.com/profile.php?id={uid}", f"https://www.facebook.com/profile.php?id={uid}&sk=about"])
+        urls.extend([target, f"https://www.facebook.com/profile.php?id={uid}", f"https://www.facebook.com/profile.php?id={uid}&sk=about"])
     elif username:
         safe = quote(username, safe=".")
         urls.extend([f"https://www.facebook.com/{safe}", f"https://www.facebook.com/{safe}/about"])
@@ -297,6 +311,66 @@ def cookie_candidate_urls(target: str, uid: str, username: str) -> list[str]:
         if about:
             urls.append(about)
     return unique_urls(urls)
+
+
+def _cookie_retry_login_next(
+    *,
+    session: requests.Session,
+    account: Any,
+    next_target: str,
+    uid: str,
+    username: str,
+    canonical_url: str,
+    probes: list[dict[str, Any]],
+    force_cookie: bool,
+) -> FastProfileTickResult:
+    retry_urls = unique_urls([normalize_tick_input(next_target), about_url(normalize_tick_input(next_target))])
+    for retry_url in retry_urls[:2]:
+        fetch = fetch_limited_text(
+            retry_url,
+            cookie_headers(account),
+            timeout=cookie_timeout(force_cookie),
+            max_bytes=cookie_read_cap_bytes(uid),
+            stop_markers=VERIFIED_MARKER_BYTES,
+            session=session,
+        )
+        retry_uid = uid or extract_uid_from_url(fetch.final_url)
+        retry_username = username or username_from_url(fetch.final_url) or username_from_url(retry_url)
+        label = verified_label(fetch.text)
+        reason = "cookie_fast_login_next_verified_found" if label else cookie_reason(label, fetch, retry_uid, retry_username)
+        probes.append(
+            probe_record(
+                "profile_tick_lite_fast_cookie",
+                retry_url,
+                fetch,
+                reason,
+                label,
+                True,
+                cookie_account=str(getattr(account, "masked_id", "") or ""),
+            )
+        )
+        if label:
+            return FastProfileTickResult(
+                uid=retry_uid,
+                username=retry_username,
+                canonical_url=canonical_tick_url(fetch.final_url or canonical_url, retry_uid),
+                verified_label=label,
+                source="profile_tick_lite_fast_cookie",
+                reason=reason,
+                http_code=fetch.http_code,
+                probes=probes,
+                used_cookie=True,
+            )
+    return FastProfileTickResult(
+        uid=uid,
+        username=username,
+        canonical_url=canonical_url,
+        source="profile_tick_lite_fast_cookie",
+        reason="cookie_fast_login_next_verified_not_found",
+        http_code=last_probe_http_code(probes),
+        probes=probes,
+        used_cookie=True,
+    )
 
 
 def about_url(url: str) -> str:
@@ -418,7 +492,7 @@ def public_max_probes() -> int:
 
 
 def cookie_max_probes(force_cookie: bool) -> int:
-    default = 2 if force_cookie else 1
+    default = 2
     try:
         return max(1, min(int(os.getenv("PROFILE_TICK_FAST_COOKIE_MAX_PROBES", str(default))), 4))
     except ValueError:
