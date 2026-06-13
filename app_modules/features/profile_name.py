@@ -1440,6 +1440,10 @@ def _profile_verified_result_from_fetch(
     username = raw_username or _profile_tick_username_from_url(fetch.final_url)
     canonical_url = _canonical_profile_tick_url(fetch.final_url or fallback_canonical_url, uid)
     verified_label = extract_profile_verified_label(fetch.text, "", uid)
+    if not verified_label and _text_has_verified_hint(fetch.text[:700000]):
+        scope_name = extract_profile_name(fetch.text[:700000])
+        if scope_name:
+            verified_label = extract_profile_verified_label(fetch.text, scope_name, uid)
     profile_seen = _profile_verified_profile_seen(fetch, uid, username, verified_label)
     reason = _profile_verified_reason(reason_prefix, verified_label, profile_seen, fetch)
     probe = _probe_record(
@@ -1510,6 +1514,8 @@ def _profile_tick_results_from_candidate(
     retry_uid = raw_uid or extract_uid_from_url(target)
     retry_username = raw_username or _profile_tick_username_from_url(target)
     retry_urls = _fast_profile_tick_urls(target, retry_uid, retry_username) or [target]
+    if used_cookie:
+        retry_urls = retry_urls[:1]
     for retry_url in retry_urls:
         key = f"{header_label}|{retry_url.lower()}"
         if key in seen:
