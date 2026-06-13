@@ -555,9 +555,9 @@ def _profile_tick_should_cookie_fallback_for_uid(normalized: str, uid: str, user
 
 def _profile_tick_uid_cookie_fallback_timeout() -> float:
     try:
-        configured = float(os.getenv("PROFILE_TICK_UID_COOKIE_FALLBACK_TIMEOUT_SEC", "2.8"))
+        configured = float(os.getenv("PROFILE_TICK_UID_COOKIE_FALLBACK_TIMEOUT_SEC", "2.2"))
     except ValueError:
-        configured = 2.8
+        configured = 2.2
     return max(1.0, min(configured, 4.0))
 
 
