@@ -385,8 +385,11 @@ def _profile_tick_status_with_uid(raw_input: str, tick: Any, current_status: Sta
         return current_status
 
     uid = str(tick.uid or "").strip()
+    reason = str(getattr(tick, "reason", "") or "")
+    if _profile_tick_plain_miss(reason):
+        return "UNKNOWN"
     if not uid:
-        if _profile_tick_name_miss_is_die(str(getattr(tick, "reason", "") or ""), int(getattr(tick, "http_code", 0) or 0)):
+        if _profile_tick_name_miss_is_die(reason, int(getattr(tick, "http_code", 0) or 0)):
             return "DIE"
         return current_status
 
@@ -396,12 +399,20 @@ def _profile_tick_status_with_uid(raw_input: str, tick: Any, current_status: Sta
         username=str(getattr(tick, "username", "") or "").strip(),
         canonical_url=str(getattr(tick, "canonical_url", "") or f"https://www.facebook.com/profile.php?id={uid}").strip(),
         source="profile_php",
-        reason=str(getattr(tick, "reason", "") or "profile_tick_uid_check"),
+        reason=reason or "profile_tick_uid_check",
     )
     live_die = check_live_die(resolved, mode="1")
     if live_die.status in {"LIVE", "DIE"}:
         return live_die.status  # type: ignore[return-value]
     return current_status
+
+
+def _profile_tick_plain_miss(reason: str) -> bool:
+    normalized_reason = str(reason or "").lower()
+    return normalized_reason in {
+        "no_cookie_name_and_verified_not_found",
+        "name_and_verified_not_found",
+    }
 
 
 def _profile_tick_name_miss_is_die(reason: str, http_code: int) -> bool:
