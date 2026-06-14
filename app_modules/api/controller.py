@@ -96,7 +96,7 @@ def health_payload() -> dict[str, Any]:
         "ok": True,
         "service": config.app_name,
         "version": config.version,
-        "codeVersion": "step160-checktick-accuracy-fast-negative",
+        "codeVersion": "step_checktick_rollback_20260614_probe_trim",
     }
 
 
