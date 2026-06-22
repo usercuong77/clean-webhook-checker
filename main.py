@@ -22,6 +22,7 @@ from app_modules.api.controller import (
 )
 from app_modules.core.config import get_config
 from app_modules.core.render_registration import schedule_render_registration
+from app_modules.core.render_scheduler import schedule_gateway_cron
 from app_modules.telegram.telegram_relay import relay_status, relay_telegram_webhook
 
 
@@ -31,6 +32,7 @@ app = FastAPI(title="Clean Webhook Checker", version="step16-clean-webhook-check
 @app.on_event("startup")
 def startup_register_render_service() -> None:
     schedule_render_registration()
+    schedule_gateway_cron()
 
 
 def require_api_key(x_api_key: str | None) -> None:
