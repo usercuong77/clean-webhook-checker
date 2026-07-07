@@ -727,13 +727,15 @@ def _run_realtime_uid_job(job: RealtimeBulkJob, job_id: str, raw_input: str) -> 
 
 def _run_realtime_post_job(job: RealtimeBulkJob, job_id: str, raw_input: str) -> dict[str, Any]:
     try:
-        item = latest_post_input(
-            LatestPostRequest(
-                input=raw_input,
-                uid=job.uid,
-                url=job.url,
-            )
+        started = perf_counter()
+        cleaned_input = sanitize_latest_post_input(raw_input)
+        item = get_latest_post_direct_from_input(
+            cleaned_input,
+            owner_uid=job.uid,
         )
+        item["elapsedMs"] = int((perf_counter() - started) * 1000)
+        item["input"] = cleaned_input
+        item["canonicalUrl"] = cleaned_input
         item["id"] = job_id
         item["type"] = "post"
         return item
