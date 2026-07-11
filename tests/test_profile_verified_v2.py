@@ -139,6 +139,21 @@ class ProfileVerifiedV2Tests(unittest.TestCase):
 
     @patch("app_modules.features.profile_verified.service.load_cookie_accounts")
     @patch("app_modules.features.profile_verified.service.fetch_profile_document")
+    def test_normal_mode_can_fall_back_to_second_cookie(self, fetch, accounts):
+        accounts.return_value = [cookie_account(), cookie_account_two()]
+        fetch.side_effect = [
+            document(PROFILE_HEADER),
+            document('"actorID":"0"'),
+            document('"actorID":"0"'),
+            document(f'{PROFILE_HEADER} "show_verified_badge_on_profile":true'),
+        ]
+        result = check_profile_verification(UID)
+        self.assertEqual(result.verification_state, "VERIFIED")
+        self.assertTrue(result.used_cookie)
+        self.assertEqual(fetch.call_count, 4)
+
+    @patch("app_modules.features.profile_verified.service.load_cookie_accounts")
+    @patch("app_modules.features.profile_verified.service.fetch_profile_document")
     def test_network_failures_remain_unknown(self, fetch, accounts):
         accounts.return_value = [cookie_account()]
         fetch.return_value = document("", http_code=0, reason="request_error:ReadTimeout", complete=False)
@@ -182,6 +197,15 @@ def cookie_account() -> CookieAccount:
         source="test",
         index=0,
         cookies={"c_user": "100000000000001", "xs": "test"},
+    )
+
+
+def cookie_account_two() -> CookieAccount:
+    return CookieAccount(
+        c_user="100000000000002",
+        source="test",
+        index=1,
+        cookies={"c_user": "100000000000002", "xs": "test-two"},
     )
 
 

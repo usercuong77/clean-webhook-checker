@@ -236,7 +236,7 @@ def _cookie_timeout(force_cookie: bool) -> float:
 
 
 def _cookie_total_deadline(force_cookie: bool) -> float:
-    default = 8.0 if force_cookie else 5.5
+    default = 9.0 if force_cookie else 7.5
     return _float_env("PROFILE_VERIFIED_V2_COOKIE_DEADLINE_SEC", default, 2.0, 12.0)
 
 
@@ -257,7 +257,7 @@ def _cookie_probe_limit(force_cookie: bool) -> int:
 
 
 def _cookie_account_limit(force_cookie: bool) -> int:
-    return _int_env("PROFILE_VERIFIED_V2_COOKIE_ACCOUNT_LIMIT", 2 if force_cookie else 1, 1, 4)
+    return _int_env("PROFILE_VERIFIED_V2_COOKIE_ACCOUNT_LIMIT", 2, 1, 4)
 
 
 def _float_env(key: str, default: float, minimum: float, maximum: float) -> float:
