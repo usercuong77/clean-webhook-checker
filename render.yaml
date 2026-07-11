@@ -5,3 +5,18 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
+    envVars:
+      - key: IG_CHECK_CONCURRENCY
+        value: "1"
+      - key: IG_MIN_REQUEST_INTERVAL_MS
+        value: "2200"
+      - key: IG_PRIMARY_WITH_COOKIE
+        value: "0"
+      - key: IG_AUTH_COOLDOWN_SEC
+        value: "90"
+      - key: IG_429_COOLDOWN_SEC
+        value: "60"
+      - key: IG_WARM_ON_START
+        value: "1"
+      - key: IG_CHECKER_API_KEY
+        sync: false
