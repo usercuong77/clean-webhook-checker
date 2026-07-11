@@ -11,6 +11,7 @@ from app_modules.core.config import get_config
 from app_modules.features.cookie_status import get_cookie_status
 from app_modules.features.latest_post import get_latest_post, get_latest_post_direct_from_input, sanitize_latest_post_input
 from app_modules.features.profile_tick import resolve_profile_tick_from_input
+from app_modules.features.profile_verified import check_profile_verification
 from app_modules.features.profile_name_resolver import choose_profile_name
 from app_modules.features.viplike import create_viplike_order, get_viplike_packages
 from app_modules.resolvers.facebook_cookies import reload_cookie_accounts_cache
@@ -359,6 +360,34 @@ def check_tick_input(req: CheckRequest) -> dict[str, Any]:
         "nameProbes": tick.probes,
         "usedCookie": tick.used_cookie,
         "checkTickMode": "cookie" if tick.used_cookie else "no_cookie",
+        "resolverDebug": {},
+    }
+
+
+def check_tick_v2_input(req: CheckRequest) -> dict[str, Any]:
+    result = check_profile_verification(
+        req.input,
+        force_cookie=bool(req.forceCookie),
+    )
+    if result.profile_state == "VISIBLE":
+        status: Status = "LIVE"
+    elif result.profile_state == "UNAVAILABLE":
+        status = "DIE"
+    else:
+        status = "UNKNOWN"
+
+    payload = result.to_dict()
+    return {
+        "ok": True,
+        "status": status,
+        "confidence": "strong" if result.conclusive else "weak",
+        "name": "",
+        "displayName": "",
+        **payload,
+        "nameSource": "",
+        "nameReason": "name_not_requested",
+        "nameProbes": [],
+        "checkTickMode": "cookie" if result.used_cookie else "no_cookie",
         "resolverDebug": {},
     }
 

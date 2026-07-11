@@ -11,6 +11,7 @@ from app_modules.api.controller import (
     check_name_input,
     checkpost_direct_input,
     check_tick_input,
+    check_tick_v2_input,
     cookie_reload_input,
     cookie_status_input,
     health_payload,
@@ -96,6 +97,13 @@ def check_name(req: CheckRequest, x_api_key: str | None = Header(default=None)) 
 def check_tick(req: CheckRequest, x_api_key: str | None = Header(default=None)) -> dict:
     require_api_key(x_api_key)
     return check_tick_input(req)
+
+
+@app.post("/checktick-v2")
+@app.post("/check-tick-v2")
+def check_tick_v2(req: CheckRequest, x_api_key: str | None = Header(default=None)) -> dict:
+    require_api_key(x_api_key)
+    return check_tick_v2_input(req)
 
 
 @app.get("/cookies/status")
