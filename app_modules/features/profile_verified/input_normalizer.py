@@ -108,18 +108,23 @@ def public_candidate_urls(target: ProfileTarget) -> list[str]:
 
 
 def cookie_candidate_urls(target: ProfileTarget) -> list[str]:
-    if target.uid:
-        return _unique([
-            f"https://www.facebook.com/profile.php?id={target.uid}",
-            f"https://www.facebook.com/profile.php?id={target.uid}&sk=about",
-        ])
+    candidates: list[str] = []
+    # A profile.php request often redirects to the canonical username but only
+    # returns Facebook's generic shell. Once the username is known, request it
+    # directly so the profile header (and verification field) is hydrated.
     if target.username:
         safe = quote(target.username, safe=".")
-        return _unique([
+        candidates.extend([
             f"https://www.facebook.com/{safe}",
             f"https://www.facebook.com/{safe}/about",
         ])
-    return _unique([target.normalized_url])
+    if target.uid:
+        candidates.extend([
+            f"https://www.facebook.com/profile.php?id={target.uid}",
+            f"https://www.facebook.com/profile.php?id={target.uid}&sk=about",
+        ])
+    candidates.append(target.normalized_url)
+    return _unique(candidates)
 
 
 def _is_facebook_url(value: str) -> bool:

@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from app_modules.api.controller import CheckRequest, check_tick_v2_input
 from app_modules.features.profile_verified.input_normalizer import normalize_profile_target
+from app_modules.features.profile_verified.input_normalizer import cookie_candidate_urls, retarget_profile
 from app_modules.features.profile_verified.parser import parse_profile_document
 from app_modules.features.profile_verified.probes import ProbeDocument
 from app_modules.features.profile_verified.service import check_profile_verification
@@ -40,7 +41,8 @@ class ProfileVerifiedV2Tests(unittest.TestCase):
             "",
             True,
         )
-        self.assertEqual(parsed.verification_state, "NOT_VERIFIED")
+        self.assertEqual(parsed.verification_state, "UNKNOWN")
+        self.assertFalse(parsed.conclusive)
 
     def test_parser_rejects_verified_marker_owned_by_other_uid(self):
         parsed = parse_profile_document(
@@ -72,16 +74,55 @@ class ProfileVerifiedV2Tests(unittest.TestCase):
 
     @patch("app_modules.features.profile_verified.service.load_cookie_accounts")
     @patch("app_modules.features.profile_verified.service.fetch_profile_document")
-    def test_complete_cookie_profile_can_confirm_not_verified(self, fetch, accounts):
+    def test_owner_scoped_false_marker_confirms_not_verified(self, fetch, accounts):
         accounts.return_value = [cookie_account()]
         fetch.side_effect = [
             document(PROFILE_HEADER),
-            document(PROFILE_HEADER),
+            document(f'{PROFILE_HEADER} "show_verified_badge_on_profile":false'),
         ]
         result = check_profile_verification(UID)
         self.assertEqual(result.verification_state, "NOT_VERIFIED")
         self.assertTrue(result.conclusive)
         self.assertTrue(result.used_cookie)
+
+    def test_generic_complete_shell_does_not_confirm_not_verified(self):
+        parsed = parse_profile_document(
+            f'"actorID":"0" ProfileCometHeader request_url="profile.php?id={UID}"',
+            f"https://www.facebook.com/profile.php?id={UID}",
+            200,
+            UID,
+            "",
+            True,
+        )
+        self.assertEqual(parsed.verification_state, "UNKNOWN")
+        self.assertFalse(parsed.conclusive)
+
+    def test_cookie_candidates_prefer_discovered_username_over_profile_php(self):
+        target = normalize_profile_target(UID)
+        updated = retarget_profile(target, "https://www.facebook.com/ChrisHughes/")
+        candidates = cookie_candidate_urls(updated)
+        self.assertEqual(candidates[0], "https://www.facebook.com/ChrisHughes")
+        self.assertIn(f"https://www.facebook.com/profile.php?id={UID}", candidates)
+
+    @patch("app_modules.features.profile_verified.service.load_cookie_accounts")
+    @patch("app_modules.features.profile_verified.service.fetch_profile_document")
+    def test_force_cookie_retargets_profile_php_then_retries_username(self, fetch, accounts):
+        accounts.return_value = [cookie_account()]
+        fetch.side_effect = [
+            document(
+                '"actorID":"0"',
+                final_url="https://www.facebook.com/ChrisHughes/",
+            ),
+            document(
+                '"id":"5","username_for_profile":null,'
+                '"show_verified_badge_on_profile":true',
+                final_url="https://www.facebook.com/ChrisHughes/",
+            ),
+        ]
+        result = check_profile_verification("5", force_cookie=True)
+        self.assertEqual(result.verification_state, "VERIFIED")
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(fetch.call_args_list[1].args[0], "https://www.facebook.com/ChrisHughes")
 
     @patch("app_modules.features.profile_verified.service.load_cookie_accounts")
     @patch("app_modules.features.profile_verified.service.fetch_profile_document")

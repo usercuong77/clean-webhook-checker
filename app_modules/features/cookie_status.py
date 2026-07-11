@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from time import perf_counter
 from typing import Any
+import re
 
 import requests
 
@@ -93,23 +94,30 @@ def classify_cookie_response(account: CookieAccount, final_url: str, body: str) 
     if "checkpoint" in haystack or "confirm your identity" in haystack:
         return "CHECKPOINT", "checkpoint_detected"
 
-    logged_markers = (
-        "logout",
-        "mbasic_logout_button",
-        "fb_dtsg",
-        account.c_user.lower(),
-    )
     login_markers = (
         "/login",
         "login_form",
         "log in to facebook",
         "dang nhap facebook",
     )
-    logged_in = any(marker and marker in haystack for marker in logged_markers)
+    viewer_ids = set(re.findall(
+        r'"(?:actorid|actor_id|user_id|userid|viewerid)"\s*:\s*"?(\d+)',
+        body[:80000],
+        flags=re.IGNORECASE,
+    ))
+    actor_matches = bool(account.c_user and account.c_user in viewer_ids)
+    explicit_logout = (
+        'id="mbasic_logout_button"' in haystack
+        or "href=\"/logout.php" in haystack
+        or "href='/logout.php" in haystack
+    )
+    csrf_session = "fb_dtsg" in haystack and bool(account.c_user and account.c_user in body[:80000])
+    logged_in = actor_matches or explicit_logout or csrf_session
     login_wall = any(marker in haystack for marker in login_markers)
 
     if logged_in:
-        return "LIVE", "logged_in_marker_found"
+        reason = "viewer_id_matches_cookie" if actor_matches else "explicit_logout_marker_found"
+        return "LIVE", reason
     if login_wall:
         return "EXPIRED_OR_LOGIN", "redirected_to_login"
     return "UNKNOWN", "no_login_or_logged_in_marker"

@@ -60,10 +60,22 @@ STOP_MARKERS = tuple(
     marker.encode("ascii")
     for marker in (
         '"show_verified_badge_on_profile":true',
+        '"show_verified_badge_on_profile":false',
         '"is_verified":true',
         '"isVerified":true',
     )
 )
+
+OWNER_OBJECT_MARKERS = (
+    '"username_for_profile"',
+    '"profile_social_context"',
+    '"profile_picture"',
+    '"alternate_name"',
+    '"is_additional_profile_plus"',
+    "profilecometheader",
+    "profile_owner_id",
+)
+SCAN_LIMIT = 1_500_000
 
 
 @dataclass(frozen=True)
@@ -102,28 +114,25 @@ def parse_profile_document(
 
     visible = _profile_visible(raw, final_url, uid, username)
     negative = _find_scoped_marker(raw, NEGATIVE_PATTERNS, uid)
-    if allow_not_verified and uid and negative:
+    if allow_not_verified and negative:
         return ParsedVerification("NOT_VERIFIED", "VISIBLE" if visible else "UNKNOWN", True, "verified_false_marker_found")
-    if allow_not_verified and uid and visible and complete:
-        return ParsedVerification("NOT_VERIFIED", "VISIBLE", True, "complete_profile_without_verified_marker")
     if visible:
         return ParsedVerification("UNKNOWN", "VISIBLE", False, "partial_profile_without_verified_marker")
     return ParsedVerification("UNKNOWN", "UNKNOWN", False, "profile_evidence_not_found")
 
 
 def _find_scoped_marker(text: str, patterns: tuple[re.Pattern[str], ...], uid: str) -> bool:
-    header = text[:900_000]
+    header = text[:SCAN_LIMIT]
     for pattern in patterns:
         for match in pattern.finditer(header):
-            if not _profile_context_at(header, match.start()):
+            if not _marker_is_profile_owner(header, match.start(), uid, pattern):
                 continue
-            if _marker_matches_owner(header, match.start(), uid, pattern):
-                return True
+            return True
     return False
 
 
 def _find_scoped_text_marker(text: str) -> bool:
-    header = text[:900_000]
+    header = text[:SCAN_LIMIT]
     lowered = header.lower()
     for marker in TEXT_MARKERS:
         start = lowered.find(marker)
@@ -135,43 +144,69 @@ def _find_scoped_text_marker(text: str) -> bool:
 
 
 def _profile_context_at(text: str, index: int) -> bool:
-    window = text[max(0, index - 30_000): min(len(text), index + 30_000)].lower()
+    window = text[max(0, index - 6_000): min(len(text), index + 3_000)].lower()
     if any(marker in window for marker in COMMENT_CONTEXT):
         return False
-    return any(marker in window for marker in PROFILE_CONTEXT)
+    return any(marker in window for marker in PROFILE_CONTEXT + OWNER_OBJECT_MARKERS)
 
 
-def _marker_matches_owner(text: str, index: int, uid: str, pattern: re.Pattern[str]) -> bool:
+def _marker_is_profile_owner(text: str, index: int, uid: str, pattern: re.Pattern[str]) -> bool:
+    local = text[max(0, index - 1_800): min(len(text), index + 900)]
+    lowered = local.lower()
+    if any(marker in lowered for marker in COMMENT_CONTEXT):
+        return False
+
     pattern_text = pattern.pattern.lower()
-    if "is_verified" not in pattern_text and "isverified" not in pattern_text:
-        return True
     clean_uid = str(uid or "").strip()
-    if not clean_uid:
-        return True
-    local = text[max(0, index - 1800): min(len(text), index + 800)]
     id_matches = list(re.finditer(
         r'"(?:id|profile_id|profile_owner_id|profile_owner|actorid)"\s*:\s*"?(\d{1,20})',
         local,
         flags=re.IGNORECASE,
     ))
-    if id_matches:
-        marker_local_index = min(1800, index)
-        nearest = min(id_matches, key=lambda match: abs(match.end() - marker_local_index))
-        return nearest.group(1) == clean_uid
-    return clean_uid in local
+    marker_local_index = min(1_800, index)
+    preceding_ids = [match for match in id_matches if match.start() <= marker_local_index]
+    nearest_id = max(preceding_ids, key=lambda match: match.start()) if preceding_ids else None
+
+    if clean_uid:
+        if nearest_id and nearest_id.group(1) != clean_uid:
+            return False
+        if not nearest_id and clean_uid not in local:
+            return False
+
+    has_owner_shape = any(marker in lowered for marker in OWNER_OBJECT_MARKERS)
+    if "show_verified_badge_on_profile" in pattern_text:
+        return has_owner_shape or bool(clean_uid and (nearest_id or clean_uid in local))
+    return has_owner_shape and _profile_context_at(text, index)
 
 
 def _profile_visible(text: str, final_url: str, uid: str, username: str) -> bool:
-    scope = text[:900_000]
+    scope = text[:SCAN_LIMIT]
     lowered = scope.lower()
-    has_profile_context = any(marker in lowered for marker in PROFILE_CONTEXT)
-    if not has_profile_context:
-        return False
     clean_uid = str(uid or "").strip()
     clean_username = str(username or "").strip().lower()
     _ = final_url
-    if clean_uid and clean_uid in lowered:
-        return True
-    if clean_username and clean_username in lowered:
-        return True
+
+    if clean_uid:
+        owner_id_pattern = re.compile(
+            rf'"(?:id|profile_id|profile_owner_id|profile_owner)"\s*:\s*"?{re.escape(clean_uid)}(?:"|\b)',
+            flags=re.IGNORECASE,
+        )
+        for match in owner_id_pattern.finditer(scope):
+            local = scope[max(0, match.start() - 700): min(len(scope), match.end() + 1_800)].lower()
+            if any(marker in local for marker in COMMENT_CONTEXT):
+                continue
+            if any(marker in local for marker in PROFILE_CONTEXT + OWNER_OBJECT_MARKERS):
+                return True
+
+    if clean_username:
+        for needle in (clean_username, clean_username.replace(".", "\\u002e")):
+            start = lowered.find(needle)
+            while start >= 0:
+                local = lowered[max(0, start - 800): min(len(lowered), start + 1_800)]
+                if (
+                    not any(marker in local for marker in COMMENT_CONTEXT)
+                    and any(marker in local for marker in PROFILE_CONTEXT + OWNER_OBJECT_MARKERS)
+                ):
+                    return True
+                start = lowered.find(needle, start + len(needle))
     return False

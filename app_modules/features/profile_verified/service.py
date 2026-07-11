@@ -64,8 +64,13 @@ def check_profile_verification(raw_input: str, force_cookie: bool = False) -> Pr
     deadline = time.perf_counter() + _cookie_total_deadline(force_cookie)
     for account in accounts:
         with requests.Session() as session:
-            current_urls = cookie_candidate_urls(target)
-            for url in current_urls[:_cookie_probe_limit(force_cookie)]:
+            pending_urls = cookie_candidate_urls(target)
+            attempted_urls: set[str] = set()
+            for _ in range(_cookie_probe_limit(force_cookie)):
+                url = next((item for item in pending_urls if item not in attempted_urls), "")
+                if not url:
+                    break
+                attempted_urls.add(url)
                 if time.perf_counter() >= deadline:
                     return _result(started, target, probes, best, "cookie_deadline_reached", True)
                 document = fetch_profile_document(
@@ -85,7 +90,10 @@ def check_profile_verification(raw_input: str, force_cookie: bool = False) -> Pr
                     document.complete,
                     allow_not_verified=True,
                 )
-                target = retarget_profile(target, document.final_url)
+                updated_target = retarget_profile(target, document.final_url)
+                if updated_target != target:
+                    target = updated_target
+                    pending_urls = cookie_candidate_urls(target) + pending_urls
                 probes.append(_probe(
                     "profile_verified_v2_cookie",
                     url,
@@ -245,7 +253,7 @@ def _public_probe_limit() -> int:
 
 
 def _cookie_probe_limit(force_cookie: bool) -> int:
-    return _int_env("PROFILE_VERIFIED_V2_COOKIE_PROBE_LIMIT", 2 if force_cookie else 1, 1, 3)
+    return _int_env("PROFILE_VERIFIED_V2_COOKIE_PROBE_LIMIT", 2, 1, 3)
 
 
 def _cookie_account_limit(force_cookie: bool) -> int:
