@@ -35,7 +35,7 @@ def probe_mode1_graph_public(uid: str) -> ProbeResult:
         )
     except requests.RequestException as exc:
         return ProbeResult(
-            status="DIE",
+            status="UNKNOWN",
             confidence="weak",
             source="mode1_graph_public",
             reason=f"request_error:{exc}",
@@ -48,6 +48,18 @@ def probe_mode1_graph_public(uid: str) -> ProbeResult:
         return ProbeResult(
             status="DIE",
             confidence="strong",
+            source="mode1_graph_public",
+            reason=f"graph_http_{http_code}",
+            http_code=http_code,
+            details={"url": url},
+        )
+
+    # Rate limits, auth walls, upstream errors, and gateway failures are not
+    # evidence that the Facebook account is dead. Let the caller retry.
+    if http_code in {401, 403, 408, 425, 429} or 500 <= http_code <= 599:
+        return ProbeResult(
+            status="UNKNOWN",
+            confidence="weak",
             source="mode1_graph_public",
             reason=f"graph_http_{http_code}",
             http_code=http_code,

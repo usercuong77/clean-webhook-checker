@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import Mock, patch
 
+import requests
+
 from app_modules.checkers.probes.mode1_graph_public import probe_mode1_graph_public
 
 
@@ -69,6 +71,24 @@ class Mode1GraphPublicTests(unittest.TestCase):
         result = probe_mode1_graph_public("61574756686411")
         self.assertEqual(result.status, "DIE")
         self.assertEqual(result.reason, "graph_http_404")
+
+    @patch("app_modules.checkers.probes.mode1_graph_public.requests.get")
+    def test_transient_http_is_unknown(self, get):
+        for status_code in (401, 403, 408, 425, 429, 500, 502, 503, 504):
+            with self.subTest(status_code=status_code):
+                get.return_value = _response(status_code, {})
+                result = probe_mode1_graph_public("61574756686411")
+                self.assertEqual(result.status, "UNKNOWN")
+                self.assertEqual(result.reason, f"graph_http_{status_code}")
+
+    @patch("app_modules.checkers.probes.mode1_graph_public.requests.get")
+    def test_request_error_is_unknown(self, get):
+        get.side_effect = requests.RequestException("timeout")
+
+        result = probe_mode1_graph_public("61574756686411")
+
+        self.assertEqual(result.status, "UNKNOWN")
+        self.assertTrue(result.reason.startswith("request_error:"))
 
     @patch("app_modules.checkers.probes.mode1_graph_public.requests.get")
     def test_missing_dimensions_is_die(self, get):
