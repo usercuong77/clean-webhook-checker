@@ -6,14 +6,9 @@ from urllib.parse import urlparse
 
 import requests
 
-from app_modules.core.render_registration import detect_public_base_url
-
 
 _START_LOCK = threading.Lock()
 _STARTED = False
-_PRIMARY_HOST = "clean-webhook-checker.onrender.com"
-
-
 def schedule_gateway_cron() -> bool:
     """Start the 60-second fallback scheduler on the primary Render only."""
     global _STARTED
@@ -63,14 +58,13 @@ def _scheduler_loop() -> None:
 
 
 def _scheduler_enabled() -> bool:
-    explicit = os.getenv("RENDER_GATEWAY_SCHEDULER_ENABLED", "").strip().lower()
-    if explicit:
-        return explicit in {"1", "true", "yes", "on"}
-    try:
-        host = (urlparse(detect_public_base_url()).hostname or "").lower()
-    except ValueError:
-        host = ""
-    return host == _PRIMARY_HOST
+    # Cloudflare owns the production cron. A Render-side scheduler duplicates
+    # every realtime task and can make non-UID jobs run twice. Keep this only
+    # as an explicitly named emergency fallback for installations without a
+    # Cloudflare schedule; the former environment variable is deliberately not
+    # honored so an old Render setting cannot re-enable duplicate execution.
+    explicit = os.getenv("RENDER_GATEWAY_SCHEDULER_FALLBACK_ENABLED", "").strip().lower()
+    return explicit in {"1", "true", "yes", "on"}
 
 
 def _scheduler_endpoint() -> str:

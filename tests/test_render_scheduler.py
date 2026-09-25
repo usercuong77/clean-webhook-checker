@@ -9,12 +9,16 @@ class RenderSchedulerTests(TestCase):
         render_scheduler._STARTED = False
 
     @patch.dict("os.environ", {"RENDER_PUBLIC_URL": "https://clean-webhook-checker.onrender.com"}, clear=True)
-    def test_primary_is_enabled_by_default(self) -> None:
-        self.assertTrue(render_scheduler._scheduler_enabled())
+    def test_primary_is_disabled_by_default(self) -> None:
+        self.assertFalse(render_scheduler._scheduler_enabled())
 
     @patch.dict("os.environ", {"RENDER_PUBLIC_URL": "https://clean-webhook-checker-a2.onrender.com"}, clear=True)
     def test_clone_is_disabled_by_default(self) -> None:
         self.assertFalse(render_scheduler._scheduler_enabled())
+
+    @patch.dict("os.environ", {"RENDER_GATEWAY_SCHEDULER_FALLBACK_ENABLED": "true"}, clear=True)
+    def test_emergency_fallback_can_be_explicitly_enabled(self) -> None:
+        self.assertTrue(render_scheduler._scheduler_enabled())
 
     @patch.dict(
         "os.environ",
