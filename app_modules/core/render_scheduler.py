@@ -10,17 +10,8 @@ import requests
 _START_LOCK = threading.Lock()
 _STARTED = False
 def schedule_gateway_cron() -> bool:
-    """Start the 60-second fallback scheduler on the primary Render only."""
-    global _STARTED
-    if not _scheduler_enabled():
-        return False
-    with _START_LOCK:
-        if _STARTED:
-            return False
-        _STARTED = True
-        thread = threading.Thread(target=_scheduler_loop, name="gateway-cron-fallback", daemon=True)
-        thread.start()
-    return True
+    """Deprecated: Cloudflare is the only production scheduler."""
+    return False
 
 
 def trigger_gateway_once() -> dict[str, Any]:
@@ -58,13 +49,7 @@ def _scheduler_loop() -> None:
 
 
 def _scheduler_enabled() -> bool:
-    # Cloudflare owns the production cron. A Render-side scheduler duplicates
-    # every realtime task and can make non-UID jobs run twice. Keep this only
-    # as an explicitly named emergency fallback for installations without a
-    # Cloudflare schedule; the former environment variable is deliberately not
-    # honored so an old Render setting cannot re-enable duplicate execution.
-    explicit = os.getenv("RENDER_GATEWAY_SCHEDULER_FALLBACK_ENABLED", "").strip().lower()
-    return explicit in {"1", "true", "yes", "on"}
+    return False
 
 
 def _scheduler_endpoint() -> str:

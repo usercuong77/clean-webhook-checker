@@ -17,8 +17,12 @@ class RenderSchedulerTests(TestCase):
         self.assertFalse(render_scheduler._scheduler_enabled())
 
     @patch.dict("os.environ", {"RENDER_GATEWAY_SCHEDULER_FALLBACK_ENABLED": "true"}, clear=True)
-    def test_emergency_fallback_can_be_explicitly_enabled(self) -> None:
-        self.assertTrue(render_scheduler._scheduler_enabled())
+    def test_environment_cannot_reenable_deprecated_scheduler(self) -> None:
+        self.assertFalse(render_scheduler._scheduler_enabled())
+
+    def test_start_does_not_spawn_a_deprecated_scheduler_thread(self) -> None:
+        self.assertFalse(render_scheduler.schedule_gateway_cron())
+        self.assertFalse(render_scheduler._STARTED)
 
     @patch.dict(
         "os.environ",
